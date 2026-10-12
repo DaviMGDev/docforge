@@ -162,16 +162,93 @@ def assemble_prompt_payload(
     ]
 
 
+LATEX_ESCAPE_COMMANDS_RE = re.compile(
+    r"^(?:frac|flat|forall|beta|bar|binom|begin|bf|bm|bmod|bot|box|bullet|bold|boldsymbol|bmatrix|brace|brack|breve|big|Big|bigg|Bigg|bgroup|"
+    r"times|theta|tau|tan|tanh|text|textbf|textit|textsf|texttt|tilde|top|to|triangle|triangleq|therefore|tag|tiny|tr|thicksim|thickapprox|"
+    r"nabla|nu|neq|ne|not|neg|notin|natural|ni|nexists|normalsize|"
+    r"rho|right|rangle|rm|root|rfloor|rceil|rightarrow|Rightarrow|restriction)\b"
+)
+
+
 def sanitize_json_text(raw_text: str) -> str:
-    """Sanitize and repair common LLM JSON syntax issues (unescaped LaTeX backslashes, trailing commas)."""
-    # 1. Escape known LaTeX commands starting with b, f, t that would otherwise be interpreted as control chars
-    latex_cmd_pattern = r"\\(?=(?:frac|flat|forall|beta|bar|binom|begin|bf|times|theta|tau|tan|tanh|text|textbf|textit|tilde|top|to)\b)"
-    s = re.sub(latex_cmd_pattern, r"\\\\", raw_text)
+    """Sanitize and repair common LLM JSON syntax issues (unescaped LaTeX backslashes, trailing commas).
+    
+    Robustly handles mixed escaping where some backslashes are already escaped (\\\\vec)
+    while others are unescaped (\\vec), preventing corruption of double backslashes into
+    invalid triple backslashes.
+    """
+    result = []
+    i = 0
+    n = len(raw_text)
+    in_string = False
 
-    # 2. Escape any backslash not followed by valid JSON escape sequence (\, ", /, b, f, n, r, t, uXXXX)
-    s = re.sub(r"\\(?![/\"\\bfnrt]|u[0-9a-fA-F]{4})", r"\\\\", s)
+    while i < n:
+        c = raw_text[i]
 
-    # 3. Strip trailing commas before object or array closures
+        if not in_string:
+            if c == '"':
+                in_string = True
+            result.append(c)
+            i += 1
+            continue
+
+        # Inside a JSON string
+        if c == '"':
+            in_string = False
+            result.append(c)
+            i += 1
+            continue
+
+        if c != '\\':
+            result.append(c)
+            i += 1
+            continue
+
+        # Count consecutive backslashes
+        slash_start = i
+        while i < n and raw_text[i] == '\\':
+            i += 1
+        slash_count = i - slash_start
+
+        next_char = raw_text[i] if i < n else ''
+
+        even_pairs = slash_count // 2
+        has_unpaired = (slash_count % 2 == 1)
+
+        result.append('\\\\' * even_pairs)
+
+        if has_unpaired:
+            is_valid_escape = False
+            if next_char in ('"', '\\', '/', 'n', 'r'):
+                rest = raw_text[i:i + 15]
+                if LATEX_ESCAPE_COMMANDS_RE.match(rest):
+                    is_valid_escape = False
+                else:
+                    is_valid_escape = True
+            elif next_char in ('b', 'f', 't'):
+                rest = raw_text[i:i + 15]
+                if LATEX_ESCAPE_COMMANDS_RE.match(rest):
+                    is_valid_escape = False
+                else:
+                    is_valid_escape = True
+            elif next_char == 'u':
+                hex_part = raw_text[i + 1:i + 5]
+                if len(hex_part) == 4 and all(ch in '0123456789abcdefABCDEF' for ch in hex_part):
+                    is_valid_escape = True
+                else:
+                    is_valid_escape = False
+
+            if is_valid_escape:
+                result.append('\\')
+                if next_char == '"':
+                    # Escaped quote inside string: consume it so it doesn't close string
+                    result.append('"')
+                    i += 1
+            else:
+                result.append('\\\\')
+
+    s = ''.join(result)
+    # Strip trailing commas before closing braces/brackets
     s = re.sub(r",\s*([\]}])", r"\1", s)
     return s
 
@@ -188,7 +265,7 @@ def repair_json_structure(cleaned: str) -> Optional[dict]:
         "\"]}]}",
     ]:
         try:
-            return json.loads(sanitize_json_text(stripped + suffix))
+            return json.loads(sanitize_json_text(stripped + suffix), strict=False)
         except json.JSONDecodeError:
             continue
     return None
@@ -212,11 +289,11 @@ def parse_and_validate_response(
 
     # Attempt regex cleanup of invalid LaTeX escapes and trailing commas if json fails
     try:
-        data = json.loads(cleaned)
+        data = json.loads(cleaned, strict=False)
     except json.JSONDecodeError:
         cleaned_repaired = sanitize_json_text(cleaned)
         try:
-            data = json.loads(cleaned_repaired)
+            data = json.loads(cleaned_repaired, strict=False)
         except json.JSONDecodeError:
             data = repair_json_structure(cleaned)
             if data is None:

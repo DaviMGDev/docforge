@@ -186,6 +186,38 @@ def test_parse_latex_formulas_with_unescaped_backslashes():
     assert r"\lim_{\Delta t \to 0}" in ast.blocks[1].content
 
 
+def test_parse_latex_formulas_mixed_and_double_escaped_backslashes():
+    # Mixed JSON with valid double backslashes and invalid single backslashes
+    mixed_json = """
+    {
+      "blocks": [
+        {
+          "type": "paragraph",
+          "page": 1,
+          "content": "Double escaped \\\\vec{v} and \\\\sigma alongside single \\vec{a} and \\rho."
+        },
+        {
+          "type": "math",
+          "page": 1,
+          "content": "\\\\nabla \\\\times \\\\vec{B} = \\mu_0 \\vec{J} + \\epsilon_0 \\frac{\\\\partial \\vec{E}}{\\\\partial t}",
+          "math_mode": "block"
+        }
+      ]
+    }
+    """
+    ast = parse_and_validate_response(
+        mixed_json, chunk_index=0, page_numbers=[1], model_name="ollama/gemma4:cloud"
+    )
+    assert len(ast.blocks) == 2
+    assert r"\vec{v}" in ast.blocks[0].content
+    assert r"\sigma" in ast.blocks[0].content
+    assert r"\vec{a}" in ast.blocks[0].content
+    assert r"\rho" in ast.blocks[0].content
+    assert r"\nabla" in ast.blocks[1].content
+    assert r"\mu_0" in ast.blocks[1].content
+
+
+
 @pytest.mark.asyncio
 async def test_llm_truncation_raises_truncation_exception():
     cfg = LlmConfig(model_name="ollama/gemma4:cloud", max_retries=1, max_tokens=100)

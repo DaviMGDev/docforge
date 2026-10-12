@@ -22,6 +22,19 @@ def test_missing_api_key_validation(monkeypatch):
     assert "OPENAI_API_KEY is required" in str(exc.value)
 
 
+def test_ollama_model_normalization_and_validation(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from pdf2md.stages.llm_worker import normalize_model_name
+
+    assert normalize_model_name("gemma4:cloud") == "ollama/gemma4:cloud"
+    assert normalize_model_name("ollama/gemma4:cloud") == "ollama/gemma4:cloud"
+    assert normalize_model_name("gpt-4o") == "gpt-4o"
+
+    # Ollama models do not require an API key
+    cfg = LlmConfig(model_name="gemma4:cloud", api_key=None)
+    validate_api_key_for_model(cfg)  # Should not raise
+
+
 def test_parse_and_validate_response():
     mock_json = """
     {

@@ -21,13 +21,16 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRe
 from pdf2md.exceptions import (
     CorruptedPdfException,
     InvalidPageRangeException,
+    LlmInferenceException,
     MissingApiKeyException,
     Pdf2MdException,
 )
+from pdf2md.logging import get_logger, setup_logging
 from pdf2md.models.cli_options import (
     CliConfig,
     ConcurrencyConfig,
     LlmConfig,
+    LogLevel,
     OutputFormat,
     PageMarkerMode,
     RangeSpec,
@@ -57,13 +60,29 @@ def convert(
     no_stitch: bool = typer.Option(False, "--no-stitch", help="Disable cross-chunk boundary stitching"),
     llm_concurrency: int = typer.Option(3, "--llm-concurrency", help="Concurrent LLM requests bound (default 3)"),
     model: Optional[str] = typer.Option(None, "--model", help="Multimodal LLM model slug (defaults to PDF2MD_MODEL or gemma4:cloud)"),
+    max_tokens: Optional[int] = typer.Option(None, "--max-tokens", help="Maximum completion tokens for LLM generation (default 8192)"),
     dpi: int = typer.Option(150, "--dpi", help="Page rendering resolution DPI (default 150)"),
     cache_dir: str = typer.Option(".cache", "--cache-dir", help="Directory for cache checkpoints"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Bypass and ignore disk cache"),
-    auto_bypass: bool = typer.Option(False, "--auto-bypass", help="Opt-in heuristic fast-path bypass for trivial prose"),
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Enable verbose debug logging"),
+    auto_bypass: bool = typer.Option(
+        False,
+        "--auto-bypass",
+        help="[Deprecated] Opt-in heuristic fast-path bypass (deprecated; all pages use multimodal LLM parsing)",
+    ),
+    verbose: int = typer.Option(0, "-v", "--verbose", count=True, help="Enable verbose logging (-v for INFO, -vv for DEBUG)"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging (alias for -vv)"),
+    log_level: Optional[str] = typer.Option(None, "--log-level", help="Explicit logging level: DEBUG, INFO, WARN, ERROR"),
 ) -> None:
     """Transform PDF documents into semantic Markdown using native extraction and vision LLMs."""
+    # Initialize structured logging
+    setup_logging(log_level=log_level, verbose=verbose, debug=debug, console=console)
+
+    if auto_bypass:
+        err_console.print(
+            "[yellow]Warning: --auto-bypass is deprecated and will be removed in a future release. "
+            "All pages are parsed using multimodal LLM for consistent fidelity.[/yellow]"
+        )
+
     # Determine default output path
     stem = os.path.splitext(os.path.basename(input_pdf))[0]
     out_format = OutputFormat(format.lower())
@@ -81,6 +100,14 @@ def convert(
     selected_model = model or os.environ.get("PDF2MD_MODEL", "gemma4:cloud")
     api_base = os.environ.get("PDF2MD_API_BASE") or os.environ.get("OLLAMA_API_BASE")
     api_key = os.environ.get("PDF2MD_API_KEY") or os.environ.get("OLLAMA_API_KEY")
+    resolved_max_tokens = max_tokens if max_tokens is not None else int(os.environ.get("PDF2MD_MAX_TOKENS", "8192"))
+
+    parsed_log_level = None
+    if log_level:
+        try:
+            parsed_log_level = LogLevel(log_level.upper())
+        except ValueError:
+            pass
 
     # Construct runtime config
     config = CliConfig(
@@ -98,9 +125,15 @@ def convert(
         dpi=int(os.environ.get("PDF2MD_DPI", dpi)),
         auto_bypass=auto_bypass,
         no_cache=no_cache,
-        verbose=verbose,
+        verbose=bool(verbose or debug),
+        log_level=parsed_log_level,
         concurrency=ConcurrencyConfig(llm_concurrency=llm_concurrency),
-        llm=LlmConfig(model_name=selected_model, api_base=api_base, api_key=api_key),
+        llm=LlmConfig(
+            model_name=selected_model,
+            api_base=api_base,
+            api_key=api_key,
+            max_tokens=resolved_max_tokens,
+        ),
     )
 
     runner = PipelineRunner(config)
@@ -168,6 +201,9 @@ def convert(
         except MissingApiKeyException as e:
             err_console.print(f"[red]{e}[/red]")
             sys.exit(5)
+        except LlmInferenceException as e:
+            err_console.print(f"[red]Error: {e}[/red]")
+            sys.exit(1)
         except CorruptedPdfException as e:
             err_console.print(f"[red]{e}[/red]")
             sys.exit(2)

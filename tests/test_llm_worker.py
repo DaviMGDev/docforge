@@ -2,12 +2,11 @@ import asyncio
 import os
 from unittest.mock import AsyncMock, patch
 import pytest
-from pdf2md.exceptions import MissingApiKeyException
+from pdf2md.exceptions import LlmInferenceException, MissingApiKeyException
 from pdf2md.models.ast import BlockType, MathMode
 from pdf2md.models.cli_options import LlmConfig
 from pdf2md.models.pipeline import PageImageRecord, PageTextRecord
 from pdf2md.stages.llm_worker import (
-    build_raw_fallback_ast,
     parse_and_validate_response,
     process_chunk_with_llm,
     validate_api_key_for_model,
@@ -58,27 +57,26 @@ def test_parse_and_validate_response():
 
 
 @pytest.mark.asyncio
-async def test_deterministic_fallback_on_llm_failure():
+async def test_llm_failure_raises_exception():
     cfg = LlmConfig(model_name="gpt-4o", max_retries=2, api_key="dummy")
     semaphore = asyncio.Semaphore(3)
 
-    raw_texts = [PageTextRecord(page_number=1, full_text="Raw fallback text from page 1")]
+    raw_texts = [PageTextRecord(page_number=1, full_text="Text from page 1")]
 
     with patch("litellm.acompletion", side_effect=Exception("HTTP 500 Server Error")):
-        result = await process_chunk_with_llm(
-            chunk_index=0,
-            page_numbers=[1],
-            page_images=[],
-            raw_texts=raw_texts,
-            available_assets=[],
-            config=cfg,
-            semaphore=semaphore,
-        )
+        with pytest.raises(LlmInferenceException) as exc_info:
+            await process_chunk_with_llm(
+                chunk_index=0,
+                page_numbers=[1],
+                page_images=[],
+                raw_texts=raw_texts,
+                available_assets=[],
+                config=cfg,
+                semaphore=semaphore,
+            )
 
-    assert result.fallback_used is True
-    assert len(result.blocks) == 1
-    assert result.blocks[0].type == BlockType.RAW_FALLBACK
-    assert "Raw fallback text from page 1" in result.blocks[0].content
+    assert "Failed to process chunk 0" in str(exc_info.value)
+    assert "HTTP 500 Server Error" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

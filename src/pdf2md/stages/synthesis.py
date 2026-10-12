@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 from pdf2md.exceptions import DiskWriteException
+from pdf2md.exceptions import LlmInferenceException
 from pdf2md.models.ast import (
     Block,
     BlockType,
@@ -110,8 +111,7 @@ def render_single_block(block: Block) -> str:
         return "---\n"
 
     elif block.type == BlockType.RAW_FALLBACK:
-        warning_banner = f"> [!WARNING] Page rendered via deterministic raw-text fallback.\n\n"
-        return warning_banner + block.content + "\n"
+        raise LlmInferenceException(f"Encountered invalid raw fallback block on page {block.page}")
 
     return ""
 

@@ -19,6 +19,7 @@ from pdf2md.exceptions import (
     InvalidPageRangeException,
     MissingApiKeyException,
 )
+from pdf2md.logging import get_logger
 from pdf2md.models.ast import DocumentAST, DocumentChunkAST, HeadingBlock
 from pdf2md.models.cli_options import CliConfig, OutputFormat
 from pdf2md.models.pipeline import (
@@ -80,9 +81,8 @@ class PipelineRunner:
         range_str = self.config.pages_spec.raw_input if self.config.pages_spec else None
         selected_pages = parse_page_selection(range_str, total_source_pages)
 
-        # Validate API key before rendering pages if auto-bypass is not active
-        if not self.config.auto_bypass:
-            validate_api_key_for_model(self.config.llm)
+        # Validate API key before rendering pages
+        validate_api_key_for_model(self.config.llm)
 
         # Step 3: Initialize Cache Manager
         cache_mgr = CacheManager(
@@ -99,6 +99,16 @@ class PipelineRunner:
 
         chunks = partition_into_chunks(selected_pages, max_chunk_size=chunk_size)
         total_chunks = len(chunks)
+
+        logger = get_logger("pipeline")
+        logger.info(
+            f"[Stage 1] Selected {len(selected_pages)} of {total_source_pages} pages; "
+            f"partitioned into {total_chunks} chunks (chunk size {chunk_size})"
+        )
+        for ch in chunks:
+            logger.debug(
+                f"[Stage 1] Chunk {ch.chunk_index} boundary: pages {min(ch.page_numbers)}-{max(ch.page_numbers)} ({len(ch.page_numbers)} pages)"
+            )
 
         if progress_callback:
             progress_callback("partition", len(selected_pages), total_source_pages)
@@ -117,14 +127,18 @@ class PipelineRunner:
                 break
 
             # 1. Check disk cache
+            pages_desc = f"pages {min(chunk.page_numbers)}-{max(chunk.page_numbers)}"
             if not self.config.no_cache and cache_mgr.is_chunk_cached(chunk.chunk_index):
                 cached_ast = cache_mgr.load_chunk_ast(chunk.chunk_index)
                 if cached_ast:
+                    logger.info(f"[CACHE HIT] chunk {chunk.chunk_index} ({pages_desc})")
                     chunk_results[idx] = cached_ast
                     processed_count += 1
                     if progress_callback:
                         progress_callback("chunks", processed_count, total_chunks)
                     continue
+            elif not self.config.no_cache:
+                logger.info(f"[CACHE MISS] chunk {chunk.chunk_index} ({pages_desc})")
 
             # 2. Sliding window bound
             while len(tasks_in_flight) >= self.config.concurrency.sliding_window_size:
@@ -138,6 +152,7 @@ class PipelineRunner:
                             res_ast = t.result()
                             chunk_results[c_idx] = res_ast
                             cache_mgr.save_chunk_ast(res_ast)
+                            logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
                             cache_mgr.purge_chunk_renders(chunks[c_idx].chunk_index)
                             del tasks_in_flight[c_idx]
                             processed_count += 1
@@ -156,22 +171,8 @@ class PipelineRunner:
                 dpi=self.config.dpi,
             )
 
-            # 4. Stage 2.5 Fast-Path Auto Bypass Check
-            is_trivial = False
-            if self.config.auto_bypass:
-                classification = classify_chunk(doc, chunk, auto_bypass_enabled=True)
-                if classification == DocumentClassification.TRIVIAL_PROSE:
-                    is_trivial = True
-
-            if is_trivial:
-                bypass_ast = build_bypass_chunk_ast(doc, chunk)
-                chunk_results[idx] = bypass_ast
-                cache_mgr.save_chunk_ast(bypass_ast)
-                cache_mgr.purge_chunk_renders(chunk.chunk_index)
-                processed_count += 1
-                if progress_callback:
-                    progress_callback("chunks", processed_count, total_chunks)
-                continue
+            # Stage 2.5 Fast-Path Auto Bypass is deprecated (Issue #6).
+            # 100% of chunks route directly to Stage 3 multimodal LLM parsing.
 
             # 5. Multimodal LLM worker task
             validate_api_key_for_model(self.config.llm)
@@ -197,6 +198,7 @@ class PipelineRunner:
                 res_ast = task_obj.result()
                 chunk_results[c_idx] = res_ast
                 cache_mgr.save_chunk_ast(res_ast)
+                logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
                 cache_mgr.purge_chunk_renders(chunks[c_idx].chunk_index)
                 processed_count += 1
                 if progress_callback:

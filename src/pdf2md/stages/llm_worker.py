@@ -13,10 +13,13 @@ import json
 import os
 import random
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional
 import litellm
+litellm.telemetry = False
 
-from pdf2md.exceptions import MissingApiKeyException
+from pdf2md.exceptions import LlmInferenceException, MissingApiKeyException
+from pdf2md.logging import get_logger
 from pdf2md.models.ast import (
     Block,
     CalloutBlock,
@@ -28,12 +31,13 @@ from pdf2md.models.ast import (
     ListItem,
     MathBlock,
     ParagraphBlock,
-    RawFallbackBlock,
     TableBlock,
     ThematicBreakBlock,
 )
 from pdf2md.models.cli_options import LlmConfig
 from pdf2md.models.pipeline import AssetRecord, PageImageRecord, PageTextRecord
+
+logger = get_logger("llm_worker")
 
 
 def normalize_model_name(model_name: str) -> str:
@@ -286,35 +290,6 @@ def parse_and_validate_response(
     )
 
 
-def build_raw_fallback_ast(
-    chunk_index: int,
-    page_numbers: List[int],
-    raw_texts: List[PageTextRecord],
-    error_reason: str,
-) -> DocumentChunkAST:
-    """Build deterministic raw-text fallback AST when LLM exhausts retries."""
-    blocks: List[Block] = []
-
-    for txt_rec in raw_texts:
-        blocks.append(
-            RawFallbackBlock(
-                page=txt_rec.page_number,
-                content=txt_rec.full_text,
-                warning_message=f"Page rendered via deterministic raw-text fallback. Reason: {error_reason}",
-            )
-        )
-
-    return DocumentChunkAST(
-        chunk_index=chunk_index,
-        page_range=(min(page_numbers), max(page_numbers)),
-        bypass_used=False,
-        fallback_used=True,
-        llm_model="raw_fallback",
-        blocks=blocks,
-        created_at=datetime.now(timezone.utc).isoformat(),
-    )
-
-
 async def process_chunk_with_llm(
     chunk_index: int,
     page_numbers: List[int],
@@ -327,6 +302,7 @@ async def process_chunk_with_llm(
 ) -> DocumentChunkAST:
     """Submit chunk to multimodal LLM pool bounded by Semaphore(3) with retry and fallback."""
     async with semaphore:
+        logger.debug(f"[LLM POOL] Acquired worker semaphore for chunk {chunk_index} (pages {min(page_numbers)}-{max(page_numbers)})")
         if status_callback:
             status_callback(chunk_index, "LLM_INFERENCE")
 
@@ -338,6 +314,7 @@ async def process_chunk_with_llm(
         normalized_model = normalize_model_name(config.model_name)
         while attempt < config.max_retries:
             attempt += 1
+            call_start = time.monotonic()
             try:
                 # Call litellm async completion
                 kwargs: Dict[str, Any] = {
@@ -361,17 +338,41 @@ async def process_chunk_with_llm(
                     kwargs["api_key"] = api_key
 
                 response = await litellm.acompletion(**kwargs)
+                elapsed = time.monotonic() - call_start
                 raw_text = response.choices[0].message.content or "{}"
+
+                usage = getattr(response, "usage", None)
+                p_tok = getattr(usage, "prompt_tokens", 0) or 0
+                c_tok = getattr(usage, "completion_tokens", 0) or 0
+                t_tok = getattr(usage, "total_tokens", 0) or 0
+
+                logger.info(
+                    f"[LLM] Chunk {chunk_index}: {normalized_model} responded in {elapsed:.2f}s "
+                    f"({len(raw_text)} bytes, {t_tok} tokens: {p_tok} prompt / {c_tok} completion)"
+                )
+
                 return parse_and_validate_response(raw_text, chunk_index, page_numbers, normalized_model)
 
             except Exception as e:
+                elapsed = time.monotonic() - call_start
                 last_error = str(e)
                 if status_callback:
                     status_callback(chunk_index, f"RETRY_BACKOFF ({attempt}/{config.max_retries})")
 
                 # Exponential backoff with jitter
                 backoff_time = min(10.0, (1.5 ** attempt) + random.uniform(0.1, 0.5))
+                logger.warning(
+                    f"[LLM RETRY] Chunk {chunk_index}: Attempt {attempt}/{config.max_retries} failed after {elapsed:.2f}s "
+                    f"({e}). Retrying in {backoff_time:.2f}s..."
+                )
                 await asyncio.sleep(backoff_time)
 
-        # Fallback to deterministic raw text AST when retries exhausted
-        return build_raw_fallback_ast(chunk_index, page_numbers, raw_texts, last_error)
+        # No fallback: fail explicitly when LLM retries are exhausted
+        logger.error(
+            f"[LLM FAILED] Chunk {chunk_index}: Retries exhausted for {normalized_model} "
+            f"after {config.max_retries} attempts: {last_error}"
+        )
+        raise LlmInferenceException(
+            f"Failed to process chunk {chunk_index} (pages {min(page_numbers)}-{max(page_numbers)}) "
+            f"with model '{normalized_model}' after {config.max_retries} attempts: {last_error}"
+        )

@@ -50,7 +50,7 @@ class LlmConfig(BaseModel):
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     temperature: float = 0.0
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     request_timeout_seconds: float = 120.0
     max_retries: int = 3
 
@@ -71,5 +71,6 @@ class CliConfig(BaseModel):
     auto_bypass: bool = False
     no_cache: bool = False
     verbose: bool = False
+    log_level: Optional[LogLevel] = None
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)

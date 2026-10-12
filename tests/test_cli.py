@@ -45,6 +45,9 @@ def test_auto_bypass_run_output_markdown(dummy_pdf, tmp_path):
     result = runner.invoke(app, [dummy_pdf, "--auto-bypass", "-o", out_md])
     assert result.exit_code == 0
     assert os.path.exists(out_md)
+    # Verify deprecation warning is emitted to user
+    combined = (result.stderr or "") + (result.stdout or "") + result.output
+    assert "Warning: --auto-bypass is deprecated" in combined
     with open(out_md, "r", encoding="utf-8") as f:
         content = f.read()
     assert "Sample heading" in content

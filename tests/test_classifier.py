@@ -83,3 +83,25 @@ def test_multicolumn_forces_complex(multicolumn_pdf):
     res = classify_chunk(doc, chunk, auto_bypass_enabled=True)
     assert res == DocumentClassification.COMPLEX
     doc.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_routes_to_llm_even_with_auto_bypass(prose_pdf, tmp_path):
+    from pdf2md.pipeline import PipelineRunner
+    from pdf2md.models.cli_options import CliConfig, LlmConfig
+
+    out_md = str(tmp_path / "prose_out.md")
+    cfg = CliConfig(
+        input_pdf_path=prose_pdf,
+        output_path=out_md,
+        auto_bypass=True,
+        no_cache=True,
+        llm=LlmConfig(model_name="gemma4:cloud"),
+    )
+    runner = PipelineRunner(cfg)
+    ast, out_md_path, _ = await runner.run()
+    assert os.path.exists(out_md_path)
+    # Validate that none of the generated blocks have bypass provenance
+    with open(out_md_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "Chapter 1: The Beginning" in content

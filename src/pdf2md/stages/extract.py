@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import pymupdf as fitz
 
 from pdf2md.exceptions import CorruptedPdfException, InvalidPageRangeException
+from pdf2md.logging import get_logger
 from pdf2md.models.pipeline import (
     AssetRecord,
     DocumentClassification,
@@ -22,6 +23,8 @@ from pdf2md.models.pipeline import (
     PageTextSpan,
 )
 from pdf2md.models.toc import OutlineNode
+
+logger = get_logger("extract")
 
 
 def compute_file_sha256(file_path: str) -> str:
@@ -320,6 +323,14 @@ def extract_chunk(
 
         assets = extract_and_dedupe_assets(doc, p, assets_dir, dedup_table)
         extracted_assets.extend(assets)
+
+    total_words = sum(len(t.full_text.split()) for t in raw_texts)
+    dedup_count = sum(1 for a in extracted_assets if a.is_deduplicated)
+    logger.info(
+        f"[Stage 2] Chunk {chunk_index} (pages {min(page_numbers)}-{max(page_numbers)}): "
+        f"{len(rendered_images)} page renders, {total_words} words, "
+        f"{len(extracted_assets)} assets ({dedup_count} deduplicated)"
+    )
 
     return ExtractionResult(
         chunk_index=chunk_index,

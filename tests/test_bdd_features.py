@@ -10,7 +10,12 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from PIL import Image
 
-from pdf2md.exceptions import CorruptedPdfException, InvalidPageRangeException, MissingApiKeyException
+from pdf2md.exceptions import (
+    CorruptedPdfException,
+    InvalidPageRangeException,
+    LlmInferenceException,
+    MissingApiKeyException,
+)
 from pdf2md.models.ast import (
     BlockType,
     CodeBlock,
@@ -35,7 +40,6 @@ from pdf2md.stages.extract import (
     render_page_image,
 )
 from pdf2md.stages.llm_worker import (
-    build_raw_fallback_ast,
     parse_and_validate_response,
     process_chunk_with_llm,
     validate_api_key_for_model,
@@ -337,7 +341,8 @@ def test_feature_markdown_synthesis_and_navigation():
 # 7. CLI & Error Handling (specs/features/cli_and_error_handling.feature)
 # -----------------------------------------------------------------------------
 
-def test_feature_cli_error_handling(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_feature_cli_error_handling(monkeypatch, tmp_path):
     # Scenario: Missing API key validation
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(MissingApiKeyException) as exc:
@@ -351,14 +356,15 @@ def test_feature_cli_error_handling(monkeypatch, tmp_path):
     with pytest.raises(CorruptedPdfException):
         open_pdf_document(corrupt_file)
 
-    # Scenario: Deterministic raw-text fallback upon repeated LLM errors
-    fallback_ast = build_raw_fallback_ast(
-        chunk_index=4,
-        page_numbers=[4],
-        raw_texts=[PageTextRecord(page_number=4, full_text="Raw fallback page text.")],
-        error_reason="Repeated HTTP 500 errors",
-    )
-    assert fallback_ast.fallback_used is True
-    assert len(fallback_ast.blocks) == 1
-    assert fallback_ast.blocks[0].type == BlockType.RAW_FALLBACK
-    assert "Raw fallback page text." in fallback_ast.blocks[0].content
+    # Scenario: Multi-retry failure raises LlmInferenceException (no raw-text fallback)
+    with patch("litellm.acompletion", side_effect=Exception("Repeated HTTP 500 errors")):
+        with pytest.raises(LlmInferenceException):
+            await process_chunk_with_llm(
+                chunk_index=4,
+                page_numbers=[4],
+                page_images=[],
+                raw_texts=[PageTextRecord(page_number=4, full_text="Raw page text.")],
+                available_assets=[],
+                config=LlmConfig(model_name="gpt-4o", max_retries=1, api_key="dummy"),
+                semaphore=asyncio.Semaphore(1),
+            )

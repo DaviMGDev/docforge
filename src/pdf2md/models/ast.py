@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Annotated, Any, List, Literal, Optional, Tuple, Union
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BlockType(str, Enum):
@@ -31,6 +31,40 @@ class CalloutType(str, Enum):
     IMPORTANT = "IMPORTANT"
     WARNING = "WARNING"
     CAUTION = "CAUTION"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+CALLOUT_SYNONYMS: dict[str, CalloutType] = {
+    "NOTE": CalloutType.NOTE,
+    "INFO": CalloutType.NOTE,
+    "INFORMATION": CalloutType.NOTE,
+    "SUMMARY": CalloutType.NOTE,
+    "TIP": CalloutType.TIP,
+    "HINT": CalloutType.TIP,
+    "IMPORTANT": CalloutType.IMPORTANT,
+    "NOTICE": CalloutType.IMPORTANT,
+    "WARNING": CalloutType.WARNING,
+    "WARN": CalloutType.WARNING,
+    "ALERT": CalloutType.WARNING,
+    "DANGER": CalloutType.WARNING,
+    "CAUTION": CalloutType.CAUTION,
+}
+
+
+def normalize_callout_type(val: Any) -> CalloutType:
+    if isinstance(val, CalloutType):
+        return val
+    if isinstance(val, str):
+        normalized = val.strip().upper()
+        if normalized in CALLOUT_SYNONYMS:
+            return CALLOUT_SYNONYMS[normalized]
+        try:
+            return CalloutType(normalized)
+        except ValueError:
+            return CalloutType.NOTE
+    return CalloutType.NOTE
 
 
 class BoundingBox(BaseModel):
@@ -132,6 +166,11 @@ class CalloutBlock(BaseBlock):
     callout_type: CalloutType = CalloutType.NOTE
     title: Optional[str] = None
     content: str
+
+    @field_validator("callout_type", mode="before")
+    @classmethod
+    def validate_callout_type(cls, v: Any) -> CalloutType:
+        return normalize_callout_type(v)
 
 
 class ThematicBreakBlock(BaseBlock):

@@ -105,7 +105,8 @@ def render_single_block(block: Block) -> str:
     elif block.type == BlockType.CALLOUT:
         quoted = "\n".join(f"> {line}" for line in block.content.splitlines())
         title_hdr = f" **{block.title}**\n" if block.title else "\n"
-        return f"> [!{block.callout_type}]{title_hdr}{quoted}\n"
+        callout_type_str = block.callout_type.value if hasattr(block.callout_type, "value") else str(block.callout_type)
+        return f"> [!{callout_type_str}]{title_hdr}{quoted}\n"
 
     elif block.type == BlockType.THEMATIC_BREAK:
         return "---\n"

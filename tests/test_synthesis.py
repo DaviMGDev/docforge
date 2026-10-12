@@ -5,6 +5,8 @@ from pdf2md.models.ast import (
     HeadingBlock,
     ParagraphBlock,
     TableBlock,
+    CalloutBlock,
+    CalloutType,
 )
 from pdf2md.models.cli_options import PageMarkerMode
 from pdf2md.models.toc import OutlineNode
@@ -94,3 +96,22 @@ def test_disable_toc_flag():
     )
     md = emit_markdown(doc_ast, toc_items, include_toc=False)
     assert "## Table of Contents" not in md
+
+
+def test_callout_markdown_emission():
+    blocks = [
+        CalloutBlock(page=1, callout_type=CalloutType.NOTE, title="Reminder", content="Be careful with units."),
+        CalloutBlock(page=1, callout_type=CalloutType.WARNING, content="High voltage danger!"),
+    ]
+    doc_ast = DocumentAST(
+        source_pdf_hash="abc",
+        total_pages=1,
+        selected_pages=[1],
+        chunks_count=1,
+        blocks=blocks,
+        stitched_at="2026-10-12T00:00:00Z",
+    )
+    md = emit_markdown(doc_ast, [], marker_mode=PageMarkerMode.NONE, include_toc=False)
+    assert "> [!NOTE] **Reminder**\n> Be careful with units.\n" in md
+    assert "> [!WARNING]\n> High voltage danger!\n" in md
+

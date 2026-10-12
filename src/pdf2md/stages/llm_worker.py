@@ -23,6 +23,9 @@ from pdf2md.logging import get_logger
 from pdf2md.models.ast import (
     Block,
     CalloutBlock,
+    CalloutType,
+    CALLOUT_SYNONYMS,
+    normalize_callout_type,
     CodeBlock,
     DocumentChunkAST,
     HeadingBlock,
@@ -307,13 +310,23 @@ def parse_and_validate_response(
                 )
             )
         elif b_type == "callout":
+            raw_callout_type = b.get("callout_type")
+            title = b.get("title")
+            if isinstance(raw_callout_type, str) and raw_callout_type.strip():
+                raw_stripped = raw_callout_type.strip()
+                callout_type = normalize_callout_type(raw_stripped)
+                if not title and raw_stripped.upper() not in CALLOUT_SYNONYMS:
+                    title = raw_stripped
+            else:
+                callout_type = CalloutType.NOTE
+
             blocks.append(
                 CalloutBlock(
                     id=b_id,
                     page=page,
-                    callout_type=b.get("callout_type", "NOTE"),
-                    title=b.get("title"),
-                    content=str(b.get("content", "")),
+                    callout_type=callout_type,
+                    title=title,
+                    content=str(b.get("content", "") or ""),
                 )
             )
         elif b_type == "thematic_break":
@@ -328,6 +341,9 @@ def parse_and_validate_response(
         blocks=blocks,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+parse_llm_json_to_ast = parse_and_validate_response
 
 
 async def process_chunk_with_llm(

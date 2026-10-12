@@ -60,6 +60,47 @@ def test_parse_and_validate_response():
     assert ast.blocks[3].math_mode == MathMode.INLINE
 
 
+def test_parse_callout_blocks_with_non_standard_types_and_synonyms():
+    mock_json = """
+    {
+      "blocks": [
+        {"type": "callout", "page": 1, "callout_type": "note", "content": "Lowercase note"},
+        {"type": "callout", "page": 1, "callout_type": "info", "content": "Info synonym"},
+        {"type": "callout", "page": 1, "callout_type": "DANGER", "content": "Danger alert"},
+        {"type": "callout", "page": 1, "callout_type": "strategy", "content": "Think step-by-step"},
+        {"type": "callout", "page": 1, "callout_type": "Key Concept", "title": "Energy Conservation", "content": "Energy is conserved"},
+        {"type": "callout", "page": 1, "content": "Missing callout_type default"}
+      ]
+    }
+    """
+    ast = parse_and_validate_response(mock_json, chunk_index=0, page_numbers=[1], model_name="test-model")
+    assert len(ast.blocks) == 6
+
+    # 0: lowercase "note" -> NOTE
+    assert ast.blocks[0].type == BlockType.CALLOUT
+    assert ast.blocks[0].callout_type.value == "NOTE"
+    assert ast.blocks[0].title is None
+
+    # 1: synonym "info" -> NOTE
+    assert ast.blocks[1].callout_type.value == "NOTE"
+    assert ast.blocks[1].title is None
+
+    # 2: synonym "DANGER" -> WARNING
+    assert ast.blocks[2].callout_type.value == "WARNING"
+
+    # 3: domain-specific "strategy" without title -> NOTE with title="strategy"
+    assert ast.blocks[3].callout_type.value == "NOTE"
+    assert ast.blocks[3].title == "strategy"
+
+    # 4: domain-specific "Key Concept" with explicit title -> NOTE with title="Energy Conservation"
+    assert ast.blocks[4].callout_type.value == "NOTE"
+    assert ast.blocks[4].title == "Energy Conservation"
+
+    # 5: omitted callout_type -> NOTE
+    assert ast.blocks[5].callout_type.value == "NOTE"
+
+
+
 @pytest.mark.asyncio
 async def test_llm_failure_raises_exception():
     cfg = LlmConfig(model_name="gpt-4o", max_retries=2, api_key="dummy")

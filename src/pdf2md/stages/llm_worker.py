@@ -36,10 +36,32 @@ from pdf2md.models.cli_options import LlmConfig
 from pdf2md.models.pipeline import AssetRecord, PageImageRecord, PageTextRecord
 
 
+def normalize_model_name(model_name: str) -> str:
+    """Ensure Ollama models have proper provider prefix for LiteLLM."""
+    if not model_name:
+        return "ollama/gemma4:cloud"
+    known_prefixes = (
+        "ollama/", "ollama_chat/", "openai/", "anthropic/", "gemini/",
+        "groq/", "mistral/", "bedrock/", "azure/", "openrouter/"
+    )
+    if any(model_name.startswith(p) for p in known_prefixes):
+        return model_name
+
+    # If model is gemma, llama, or contains colon tag like gemma4:cloud -> route to ollama
+    if ":" in model_name or any(k in model_name.lower() for k in ["gemma", "llama", "qwen", "mistral", "deepseek", "phi"]):
+        return f"ollama/{model_name}"
+
+    return model_name
+
+
 def validate_api_key_for_model(config: LlmConfig) -> None:
     """Validate required API key presence before executing pipeline."""
     model = config.model_name.lower()
     if config.api_key:
+        return
+
+    # Ollama models do not require an API key by default
+    if model.startswith("ollama") or "gemma" in model or "llama" in model:
         return
 
     # Check common provider environment variables
@@ -313,26 +335,34 @@ async def process_chunk_with_llm(
         attempt = 0
         last_error = ""
 
+        normalized_model = normalize_model_name(config.model_name)
         while attempt < config.max_retries:
             attempt += 1
             try:
                 # Call litellm async completion
                 kwargs: Dict[str, Any] = {
-                    "model": config.model_name,
+                    "model": normalized_model,
                     "messages": messages,
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                     "timeout": config.request_timeout_seconds,
                     "response_format": {"type": "json_object"},
                 }
-                if config.api_key:
-                    kwargs["api_key"] = config.api_key
-                if config.api_base:
-                    kwargs["api_base"] = config.api_base
+                api_base = config.api_base or os.environ.get("PDF2MD_API_BASE") or (
+                    os.environ.get("OLLAMA_API_BASE") if "ollama" in normalized_model else None
+                )
+                if api_base:
+                    kwargs["api_base"] = api_base
+
+                api_key = config.api_key or os.environ.get("PDF2MD_API_KEY") or (
+                    os.environ.get("OLLAMA_API_KEY") if "ollama" in normalized_model else None
+                )
+                if api_key:
+                    kwargs["api_key"] = api_key
 
                 response = await litellm.acompletion(**kwargs)
                 raw_text = response.choices[0].message.content or "{}"
-                return parse_and_validate_response(raw_text, chunk_index, page_numbers, config.model_name)
+                return parse_and_validate_response(raw_text, chunk_index, page_numbers, normalized_model)
 
             except Exception as e:
                 last_error = str(e)

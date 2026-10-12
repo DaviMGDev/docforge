@@ -10,8 +10,11 @@ import os
 import signal
 import sys
 from typing import Optional
+from dotenv import load_dotenv
 import typer
 from rich.console import Console
+
+load_dotenv()
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
@@ -53,7 +56,7 @@ def convert(
     adaptive_chunking: bool = typer.Option(True, "--adaptive-chunking/--no-adaptive", help="Dynamically adjust chunk size"),
     no_stitch: bool = typer.Option(False, "--no-stitch", help="Disable cross-chunk boundary stitching"),
     llm_concurrency: int = typer.Option(3, "--llm-concurrency", help="Concurrent LLM requests bound (default 3)"),
-    model: str = typer.Option("gpt-4o", "--model", help="Multimodal LLM model slug"),
+    model: Optional[str] = typer.Option(None, "--model", help="Multimodal LLM model slug (defaults to PDF2MD_MODEL or gemma4:cloud)"),
     dpi: int = typer.Option(150, "--dpi", help="Page rendering resolution DPI (default 150)"),
     cache_dir: str = typer.Option(".cache", "--cache-dir", help="Directory for cache checkpoints"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Bypass and ignore disk cache"),
@@ -75,6 +78,10 @@ def convert(
 
     range_spec = RangeSpec(raw_input=pages, normalized_pages=[]) if pages else None
 
+    selected_model = model or os.environ.get("PDF2MD_MODEL", "gemma4:cloud")
+    api_base = os.environ.get("PDF2MD_API_BASE") or os.environ.get("OLLAMA_API_BASE")
+    api_key = os.environ.get("PDF2MD_API_KEY") or os.environ.get("OLLAMA_API_KEY")
+
     # Construct runtime config
     config = CliConfig(
         input_pdf_path=input_pdf,
@@ -93,7 +100,7 @@ def convert(
         no_cache=no_cache,
         verbose=verbose,
         concurrency=ConcurrencyConfig(llm_concurrency=llm_concurrency),
-        llm=LlmConfig(model_name=model),
+        llm=LlmConfig(model_name=selected_model, api_base=api_base, api_key=api_key),
     )
 
     runner = PipelineRunner(config)

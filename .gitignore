@@ -22,6 +22,7 @@ env/
 !.env.example
 
 # Caches & Test outputs
+.cache/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

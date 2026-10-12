@@ -186,6 +186,8 @@ def convert(
             doc_ast, out_md, out_json = loop.run_until_complete(
                 runner.run(progress_callback=progress_cb, worker_callback=worker_cb)
             )
+            progress.update(stage1_task, completed=100)
+            progress.update(stage2_task, completed=100)
             progress.update(stage3_task, completed=100)
             progress.update(stage4_task, completed=100)
 

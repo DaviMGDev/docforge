@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import shutil
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from pdf2md.models.ast import DocumentChunkAST
 from pdf2md.models.cache import (
     CacheManifest,
@@ -109,20 +109,45 @@ class CacheManager:
             with open(self.manifest_path, "w", encoding="utf-8") as f:
                 f.write(self.manifest.model_dump_json(indent=2))
 
-    def is_chunk_cached(self, chunk_index: int) -> bool:
+    def is_chunk_cached(self, chunk_key: Union[int, Tuple[int, int]]) -> bool:
         """Return True if chunk exists and AST json file is valid."""
         if not self.manifest or self.config.no_cache:
             return False
 
-        chunk_file = os.path.join(self.chunks_dir, f"chunk_{chunk_index:04d}.json")
-        if not os.path.exists(chunk_file):
-            return False
+        if isinstance(chunk_key, tuple):
+            entry = next((c for c in self.manifest.completed_chunks if c.page_range == chunk_key), None)
+            if not entry:
+                return False
+            chunk_file = os.path.join(self.cache_root, entry.ast_json_path)
+            return os.path.exists(chunk_file)
 
-        return any(c.chunk_index == chunk_index for c in self.manifest.completed_chunks)
+        # Fallback / backward compatibility for int chunk_index
+        entry = next((c for c in self.manifest.completed_chunks if c.chunk_index == chunk_key), None)
+        if entry:
+            chunk_file = os.path.join(self.cache_root, entry.ast_json_path)
+            return os.path.exists(chunk_file)
 
-    def load_chunk_ast(self, chunk_index: int) -> Optional[DocumentChunkAST]:
+        chunk_file = os.path.join(self.chunks_dir, f"chunk_{chunk_key:04d}.json")
+        return os.path.exists(chunk_file) and any(c.chunk_index == chunk_key for c in self.manifest.completed_chunks)
+
+    def load_chunk_ast(self, chunk_key: Union[int, Tuple[int, int]]) -> Optional[DocumentChunkAST]:
         """Load cached DocumentChunkAST from disk."""
-        chunk_file = os.path.join(self.chunks_dir, f"chunk_{chunk_index:04d}.json")
+        if not self.manifest:
+            return None
+
+        if isinstance(chunk_key, tuple):
+            entry = next((c for c in self.manifest.completed_chunks if c.page_range == chunk_key), None)
+            if entry:
+                chunk_file = os.path.join(self.cache_root, entry.ast_json_path)
+            else:
+                chunk_file = os.path.join(self.chunks_dir, f"chunk_p{chunk_key[0]:04d}_p{chunk_key[1]:04d}.json")
+        else:
+            entry = next((c for c in self.manifest.completed_chunks if c.chunk_index == chunk_key), None)
+            if entry:
+                chunk_file = os.path.join(self.cache_root, entry.ast_json_path)
+            else:
+                chunk_file = os.path.join(self.chunks_dir, f"chunk_{chunk_key:04d}.json")
+
         if not os.path.exists(chunk_file):
             return None
 
@@ -132,7 +157,8 @@ class CacheManager:
 
     def save_chunk_ast(self, chunk_ast: DocumentChunkAST) -> None:
         """Persist completed DocumentChunkAST and update manifest."""
-        chunk_file = os.path.join(self.chunks_dir, f"chunk_{chunk_ast.chunk_index:04d}.json")
+        start_p, end_p = chunk_ast.page_range
+        chunk_file = os.path.join(self.chunks_dir, f"chunk_p{start_p:04d}_p{end_p:04d}.json")
         json_str = chunk_ast.model_dump_json(indent=2)
         with open(chunk_file, "w", encoding="utf-8") as f:
             f.write(json_str)
@@ -152,21 +178,29 @@ class CacheManager:
         )
 
         if self.manifest:
-            # Replace existing or append
+            # Replace existing or append by page_range
             self.manifest.completed_chunks = [
-                c for c in self.manifest.completed_chunks if c.chunk_index != chunk_ast.chunk_index
+                c for c in self.manifest.completed_chunks if c.page_range != chunk_ast.page_range
             ] + [entry]
             self._persist_manifest()
 
-    def get_chunk_render_dir(self, chunk_index: int) -> str:
+    def get_chunk_render_dir(self, chunk_key: Union[int, Tuple[int, int]]) -> str:
         """Get path for temporary rendered images for chunk."""
-        chunk_render_dir = os.path.join(self.renders_dir, f"chunk_{chunk_index:04d}")
+        if isinstance(chunk_key, tuple):
+            name = f"chunk_p{chunk_key[0]:04d}_p{chunk_key[1]:04d}"
+        else:
+            name = f"chunk_{chunk_key:04d}"
+        chunk_render_dir = os.path.join(self.renders_dir, name)
         os.makedirs(chunk_render_dir, exist_ok=True)
         return chunk_render_dir
 
-    def purge_chunk_renders(self, chunk_index: int) -> None:
+    def purge_chunk_renders(self, chunk_key: Union[int, Tuple[int, int]]) -> None:
         """Purge rendered page bitmaps for chunk to enforce sliding window memory bounds."""
-        chunk_render_dir = os.path.join(self.renders_dir, f"chunk_{chunk_index:04d}")
+        if isinstance(chunk_key, tuple):
+            name = f"chunk_p{chunk_key[0]:04d}_p{chunk_key[1]:04d}"
+        else:
+            name = f"chunk_{chunk_key:04d}"
+        chunk_render_dir = os.path.join(self.renders_dir, name)
         if os.path.exists(chunk_render_dir):
             try:
                 shutil.rmtree(chunk_render_dir)

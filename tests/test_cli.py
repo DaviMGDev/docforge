@@ -69,3 +69,61 @@ def test_format_json_only(dummy_pdf, tmp_path):
     assert os.path.exists(out_json)
     out_md = str(tmp_path / "doc.md")
     assert not os.path.exists(out_md)
+
+
+@pytest.mark.asyncio
+async def test_stage1_progress_tracks_selected_pages(tmp_path):
+    pdf_path = str(tmp_path / "ten_pages.pdf")
+    doc = fitz.open()
+    for i in range(10):
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((50, 50), f"Page {i + 1} content", fontsize=12)
+    doc.save(pdf_path)
+    doc.close()
+
+    from unittest.mock import patch
+    from pdf2md.models.ast import DocumentChunkAST, ParagraphBlock
+    from pdf2md.models.cli_options import CliConfig, LlmConfig, RangeSpec
+    from pdf2md.models.pipeline import ExtractionResult
+    from pdf2md.pipeline import PipelineRunner
+
+    cfg = CliConfig(
+        input_pdf_path=pdf_path,
+        output_path=str(tmp_path / "out.md"),
+        pages_spec=RangeSpec(raw_input="2-3"),
+        no_cache=True,
+        llm=LlmConfig(model_name="ollama/llama3"),
+    )
+    pipeline = PipelineRunner(cfg)
+
+    partition_events = []
+
+    def progress_cb(stage: str, current: int, total: int):
+        if stage == "partition":
+            partition_events.append((current, total))
+
+    mock_ast = DocumentChunkAST(
+        chunk_index=0,
+        page_range=(2, 3),
+        created_at="2026-10-12T00:00:00Z",
+        blocks=[ParagraphBlock(page=2, content="Mock text")],
+    )
+
+    with patch("pdf2md.pipeline.extract_chunk") as mock_extract, patch(
+        "pdf2md.pipeline.process_chunk_with_llm", return_value=mock_ast
+    ):
+        mock_extract.return_value = ExtractionResult(
+            chunk_index=0,
+            page_numbers=[2, 3],
+            rendered_images=[],
+            raw_texts=[],
+            extracted_assets=[],
+        )
+        await pipeline.run(progress_callback=progress_cb)
+
+    assert len(partition_events) >= 1
+    current, total = partition_events[-1]
+    assert current == 2
+    assert total == 2
+    assert (current / total) * 100.0 == 100.0
+

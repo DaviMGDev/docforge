@@ -111,7 +111,7 @@ class PipelineRunner:
             )
 
         if progress_callback:
-            progress_callback("partition", len(selected_pages), total_source_pages)
+            progress_callback("partition", len(selected_pages), len(selected_pages))
 
         # Prepare worker concurrency
         semaphore = asyncio.Semaphore(self.config.concurrency.llm_concurrency)
@@ -127,11 +127,13 @@ class PipelineRunner:
                 break
 
             # 1. Check disk cache
-            pages_desc = f"pages {min(chunk.page_numbers)}-{max(chunk.page_numbers)}"
-            if not self.config.no_cache and cache_mgr.is_chunk_cached(chunk.chunk_index):
-                cached_ast = cache_mgr.load_chunk_ast(chunk.chunk_index)
+            chunk_range = (min(chunk.page_numbers), max(chunk.page_numbers))
+            pages_desc = f"pages {chunk_range[0]}-{chunk_range[1]}"
+            if not self.config.no_cache and cache_mgr.is_chunk_cached(chunk_range):
+                cached_ast = cache_mgr.load_chunk_ast(chunk_range)
                 if cached_ast:
                     logger.info(f"[CACHE HIT] chunk {chunk.chunk_index} ({pages_desc})")
+                    cached_ast.chunk_index = chunk.chunk_index
                     chunk_results[idx] = cached_ast
                     processed_count += 1
                     if progress_callback:
@@ -153,14 +155,15 @@ class PipelineRunner:
                             chunk_results[c_idx] = res_ast
                             cache_mgr.save_chunk_ast(res_ast)
                             logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
-                            cache_mgr.purge_chunk_renders(chunks[c_idx].chunk_index)
+                            c_chunk = chunks[c_idx]
+                            cache_mgr.purge_chunk_renders((min(c_chunk.page_numbers), max(c_chunk.page_numbers)))
                             del tasks_in_flight[c_idx]
                             processed_count += 1
                             if progress_callback:
                                 progress_callback("chunks", processed_count, total_chunks)
 
             # 3. Deterministic Extraction
-            chunk_render_dir = cache_mgr.get_chunk_render_dir(chunk.chunk_index)
+            chunk_render_dir = cache_mgr.get_chunk_render_dir(chunk_range)
             extraction_res = extract_chunk(
                 doc=doc,
                 chunk_index=chunk.chunk_index,
@@ -199,7 +202,8 @@ class PipelineRunner:
                 chunk_results[c_idx] = res_ast
                 cache_mgr.save_chunk_ast(res_ast)
                 logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
-                cache_mgr.purge_chunk_renders(chunks[c_idx].chunk_index)
+                c_chunk = chunks[c_idx]
+                cache_mgr.purge_chunk_renders((min(c_chunk.page_numbers), max(c_chunk.page_numbers)))
                 processed_count += 1
                 if progress_callback:
                     progress_callback("chunks", processed_count, total_chunks)

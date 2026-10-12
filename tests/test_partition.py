@@ -55,6 +55,19 @@ def test_out_of_bounds_raises_exception():
         parse_page_selection("501", 500)
 
 
+def test_zero_indexed_print_range_gives_actionable_guidance():
+    with pytest.raises(InvalidPageRangeException) as excinfo:
+        parse_page_selection("0-26", 500)
+    msg = str(excinfo.value)
+    assert "starts at 0" in msg
+    assert "1-based" in msg
+    assert "Python slice notation" in msg
+
+    with pytest.raises(InvalidPageRangeException) as excinfo_single:
+        parse_page_selection("0", 500)
+    assert "Page number 0 is invalid" in str(excinfo_single.value)
+
+
 def test_partition_into_chunks_bounded_size():
     pages = list(range(1, 13))
     chunks = partition_into_chunks(pages, max_chunk_size=4)

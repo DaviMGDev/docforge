@@ -84,6 +84,11 @@ def parse_page_selection(range_str: Optional[str], total_pages: int) -> List[int
             if start_p > end_p:
                 raise InvalidPageRangeException(f"Start page cannot exceed end page: {token}")
             if start_p < 1 or end_p > total_pages:
+                if start_p == 0:
+                    raise InvalidPageRangeException(
+                        f"Page range '{token}' starts at 0. Page numbers in print range notation are 1-based (e.g. '1-{end_p}'). "
+                        f"For 0-based indexing, use Python slice notation (e.g. '[:{end_p}]' or '[0:{end_p}]')."
+                    )
                 raise InvalidPageRangeException(
                     f"Page range {token} out of document bounds (1-{total_pages})"
                 )
@@ -97,6 +102,11 @@ def parse_page_selection(range_str: Optional[str], total_pages: int) -> List[int
                 raise InvalidPageRangeException(f"Invalid page token: {token}") from e
 
             if p < 1 or p > total_pages:
+                if p == 0:
+                    raise InvalidPageRangeException(
+                        "Page number 0 is invalid. Page numbers in print notation are 1-based (e.g. '1'). "
+                        "For 0-based indexing, use Python slice notation (e.g. '[:1]')."
+                    )
                 raise InvalidPageRangeException(
                     f"Page {p} out of document bounds (1-{total_pages})"
                 )

@@ -34,3 +34,8 @@ class ChunkOrderException(Pdf2MdException):
 class LlmInferenceException(Pdf2MdException):
     """Raised when LLM calls fail repeatedly across retries."""
     pass
+
+
+class LlmTruncationException(LlmInferenceException):
+    """Raised when LLM response is truncated due to token limit or finish_reason == 'length'."""
+    pass

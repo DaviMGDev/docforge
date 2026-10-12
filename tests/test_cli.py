@@ -40,6 +40,33 @@ def test_invalid_page_range_exit_code(dummy_pdf):
     assert result.exit_code == 4
 
 
+def test_zero_page_range_fails_fast_with_actionable_error(dummy_pdf):
+    result = runner.invoke(app, [dummy_pdf, "-p", "0-1"])
+    assert result.exit_code == 4
+    combined = (result.stderr or "") + (result.stdout or "") + result.output
+    assert "starts at 0" in combined
+    assert "1-based" in combined
+
+
+def test_cli_flags_context_window_and_timeout(dummy_pdf, tmp_path):
+    out_md = str(tmp_path / "out.md")
+    result = runner.invoke(
+        app,
+        [
+            dummy_pdf,
+            "--auto-bypass",
+            "--context-window",
+            "16384",
+            "--timeout",
+            "90.0",
+            "-o",
+            out_md,
+        ],
+    )
+    assert result.exit_code == 0
+    assert os.path.exists(out_md)
+
+
 def test_auto_bypass_run_output_markdown(dummy_pdf, tmp_path):
     out_md = str(tmp_path / "output.md")
     result = runner.invoke(app, [dummy_pdf, "--auto-bypass", "-o", out_md])

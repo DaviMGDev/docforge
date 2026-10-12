@@ -36,6 +36,8 @@ from pdf2md.models.cli_options import (
     RangeSpec,
 )
 from pdf2md.pipeline import PipelineRunner
+from pdf2md.stages.extract import open_pdf_document
+from pdf2md.stages.partition import parse_page_selection
 
 app = typer.Typer(
     name="pdf2md",
@@ -61,6 +63,17 @@ def convert(
     llm_concurrency: int = typer.Option(3, "--llm-concurrency", help="Concurrent LLM requests bound (default 3)"),
     model: Optional[str] = typer.Option(None, "--model", help="Multimodal LLM model slug (defaults to PDF2MD_MODEL or gemma4:cloud)"),
     max_tokens: Optional[int] = typer.Option(None, "--max-tokens", help="Maximum completion tokens for LLM generation (default 8192)"),
+    context_window: Optional[int] = typer.Option(
+        None,
+        "--context-window",
+        "--num-ctx",
+        help="Context window token size for Ollama/local backends (num_ctx)",
+    ),
+    timeout: Optional[float] = typer.Option(
+        None,
+        "--timeout",
+        help="LLM request timeout in seconds (default 120.0)",
+    ),
     dpi: int = typer.Option(150, "--dpi", help="Page rendering resolution DPI (default 150)"),
     cache_dir: str = typer.Option(".cache", "--cache-dir", help="Directory for cache checkpoints"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Bypass and ignore disk cache"),
@@ -83,6 +96,29 @@ def convert(
             "All pages are parsed using multimodal LLM for consistent fidelity.[/yellow]"
         )
 
+    if not os.path.exists(input_pdf):
+        err_console.print(f"[red]Error: File not found: {input_pdf}[/red]")
+        sys.exit(2)
+
+    # Early validation of PDF and page range before expensive hashing or progress bars
+    try:
+        early_doc = open_pdf_document(input_pdf)
+        total_source_pages = len(early_doc)
+        early_doc.close()
+    except CorruptedPdfException as e:
+        err_console.print(f"[red]{e}[/red]")
+        sys.exit(2)
+    except Exception as e:
+        err_console.print(f"[red]Error: Corrupted or unreadable PDF: {e}[/red]")
+        sys.exit(2)
+
+    if pages:
+        try:
+            parse_page_selection(pages, total_source_pages)
+        except InvalidPageRangeException as e:
+            err_console.print(f"[red]Error: Invalid page range: {e}[/red]")
+            sys.exit(4)
+
     # Determine default output path
     stem = os.path.splitext(os.path.basename(input_pdf))[0]
     out_format = OutputFormat(format.lower())
@@ -101,6 +137,21 @@ def convert(
     api_base = os.environ.get("PDF2MD_API_BASE") or os.environ.get("OLLAMA_API_BASE")
     api_key = os.environ.get("PDF2MD_API_KEY") or os.environ.get("OLLAMA_API_KEY")
     resolved_max_tokens = max_tokens if max_tokens is not None else int(os.environ.get("PDF2MD_MAX_TOKENS", "8192"))
+
+    resolved_context_window = context_window
+    if resolved_context_window is None:
+        if "PDF2MD_CONTEXT_WINDOW" in os.environ:
+            resolved_context_window = int(os.environ["PDF2MD_CONTEXT_WINDOW"])
+        elif "PDF2MD_NUM_CTX" in os.environ:
+            resolved_context_window = int(os.environ["PDF2MD_NUM_CTX"])
+
+    resolved_timeout = timeout
+    if resolved_timeout is None:
+        if "PDF2MD_TIMEOUT" in os.environ:
+            resolved_timeout = float(os.environ["PDF2MD_TIMEOUT"])
+        else:
+            # Scale dynamically with max_tokens budget (minimum 120s for <= 8192 tokens)
+            resolved_timeout = max(120.0, (resolved_max_tokens / 8192.0) * 120.0)
 
     parsed_log_level = None
     if log_level:
@@ -133,6 +184,8 @@ def convert(
             api_base=api_base,
             api_key=api_key,
             max_tokens=resolved_max_tokens,
+            context_window=resolved_context_window,
+            request_timeout_seconds=resolved_timeout,
         ),
     )
 
@@ -152,7 +205,7 @@ def convert(
 
     worker_slots = {i: "Idle" for i in range(1, llm_concurrency + 1)}
 
-    with Progress(
+    progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
@@ -160,67 +213,76 @@ def convert(
         TimeRemainingColumn(),
         console=console,
         transient=False,
-    ) as progress:
-        stage1_task = progress.add_task("[1/4] Partitioning & Local Extraction", total=100)
-        stage2_task = progress.add_task("[2/4] Multimodal Parsing", total=100)
-        stage3_task = progress.add_task("[3/4] Cross-Chunk Stitching", total=100)
-        stage4_task = progress.add_task("[4/4] Markdown & TOC Synthesis", total=100)
+    )
 
-        def progress_cb(stage: str, current: int, total: int):
-            pct = (current / max(1, total)) * 100.0
-            if stage == "partition":
-                progress.update(stage1_task, completed=pct)
-            elif stage == "chunks":
-                progress.update(stage2_task, completed=pct)
+    stage1_task = progress.add_task("[1/4] Partitioning & Local Extraction", total=100)
+    stage2_task = progress.add_task("[2/4] Multimodal Parsing", total=100)
+    stage3_task = progress.add_task("[3/4] Cross-Chunk Stitching", total=100)
+    stage4_task = progress.add_task("[4/4] Markdown & TOC Synthesis", total=100)
 
-        def worker_cb(chunk_idx: int, status: str):
-            slot = (chunk_idx % llm_concurrency) + 1
-            worker_slots[slot] = f"Chunk {chunk_idx}: {status}"
-            slots_str = " ".join([f"[Worker {s}: {st}]" for s, st in worker_slots.items()])
-            progress.update(stage2_task, description=f"[2/4] Multimodal Parsing {slots_str}")
+    def progress_cb(stage: str, current: int, total: int):
+        pct = (current / max(1, total)) * 100.0
+        if stage == "partition":
+            progress.update(stage1_task, completed=pct)
+        elif stage == "chunks":
+            progress.update(stage2_task, completed=pct)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+    def worker_cb(chunk_idx: int, status: str):
+        slot = (chunk_idx % llm_concurrency) + 1
+        worker_slots[slot] = f"Chunk {chunk_idx}: {status}"
+        slots_str = " ".join([f"[Worker {s}: {st}]" for s, st in worker_slots.items()])
+        progress.update(stage2_task, description=f"[2/4] Multimodal Parsing {slots_str}")
 
-        try:
-            doc_ast, out_md, out_json = loop.run_until_complete(
-                runner.run(progress_callback=progress_cb, worker_callback=worker_cb)
-            )
-            progress.update(stage1_task, completed=100)
-            progress.update(stage2_task, completed=100)
-            progress.update(stage3_task, completed=100)
-            progress.update(stage4_task, completed=100)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-            console.print(f"\n[green]✓ Conversion completed successfully![/green]")
-            if out_md:
-                console.print(f"  Markdown: [bold]{out_md}[/bold]")
-            if out_json:
-                console.print(f"  AST JSON: [bold]{out_json}[/bold]")
+    progress.start()
+    try:
+        doc_ast, out_md, out_json = loop.run_until_complete(
+            runner.run(progress_callback=progress_cb, worker_callback=worker_cb)
+        )
+        progress.update(stage1_task, completed=100)
+        progress.update(stage2_task, completed=100)
+        progress.update(stage3_task, completed=100)
+        progress.update(stage4_task, completed=100)
+        progress.stop()
 
-            loop.close()
-            sys.exit(0)
+        console.print(f"\n[green]✓ Conversion completed successfully![/green]")
+        if out_md:
+            console.print(f"  Markdown: [bold]{out_md}[/bold]")
+        if out_json:
+            console.print(f"  AST JSON: [bold]{out_json}[/bold]")
 
-        except MissingApiKeyException as e:
-            err_console.print(f"[red]{e}[/red]")
-            sys.exit(5)
-        except LlmInferenceException as e:
+        loop.close()
+        sys.exit(0)
+
+    except MissingApiKeyException as e:
+        progress.stop()
+        err_console.print(f"[red]{e}[/red]")
+        sys.exit(5)
+    except LlmInferenceException as e:
+        progress.stop()
+        err_console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+    except CorruptedPdfException as e:
+        progress.stop()
+        err_console.print(f"[red]{e}[/red]")
+        sys.exit(2)
+    except InvalidPageRangeException as e:
+        progress.stop()
+        err_console.print(f"[red]Error: Invalid page range: {e}[/red]")
+        sys.exit(4)
+    except KeyboardInterrupt:
+        progress.stop()
+        err_console.print(f"\n[yellow]Conversion interrupted. Intermediate chunks saved. Run the command again to resume.[/yellow]")
+        sys.exit(130)
+    except Exception as e:
+        progress.stop()
+        if verbose:
+            err_console.print_exception()
+        else:
             err_console.print(f"[red]Error: {e}[/red]")
-            sys.exit(1)
-        except CorruptedPdfException as e:
-            err_console.print(f"[red]{e}[/red]")
-            sys.exit(2)
-        except InvalidPageRangeException as e:
-            err_console.print(f"[red]Error: Invalid page range: {e}[/red]")
-            sys.exit(4)
-        except KeyboardInterrupt:
-            err_console.print(f"\n[yellow]Conversion interrupted. Intermediate chunks saved. Run the command again to resume.[/yellow]")
-            sys.exit(130)
-        except Exception as e:
-            if verbose:
-                err_console.print_exception()
-            else:
-                err_console.print(f"[red]Error: {e}[/red]")
-            sys.exit(1)
+        sys.exit(1)
 
 
 def main():

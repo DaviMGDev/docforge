@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 import litellm
 litellm.telemetry = False
 
-from pdf2md.exceptions import LlmInferenceException, MissingApiKeyException
+from pdf2md.exceptions import LlmInferenceException, LlmTruncationException, MissingApiKeyException
 from pdf2md.logging import get_logger
 from pdf2md.models.ast import (
     Block,
@@ -159,6 +159,38 @@ def assemble_prompt_payload(
     ]
 
 
+def sanitize_json_text(raw_text: str) -> str:
+    """Sanitize and repair common LLM JSON syntax issues (unescaped LaTeX backslashes, trailing commas)."""
+    # 1. Escape known LaTeX commands starting with b, f, t that would otherwise be interpreted as control chars
+    latex_cmd_pattern = r"\\(?=(?:frac|flat|forall|beta|bar|binom|begin|bf|times|theta|tau|tan|tanh|text|textbf|textit|tilde|top|to)\b)"
+    s = re.sub(latex_cmd_pattern, r"\\\\", raw_text)
+
+    # 2. Escape any backslash not followed by valid JSON escape sequence (\, ", /, b, f, n, r, t, uXXXX)
+    s = re.sub(r"\\(?![/\"\\bfnrt]|u[0-9a-fA-F]{4})", r"\\\\", s)
+
+    # 3. Strip trailing commas before object or array closures
+    s = re.sub(r",\s*([\]}])", r"\1", s)
+    return s
+
+
+def repair_json_structure(cleaned: str) -> Optional[dict]:
+    """Attempt structural repairs on malformed JSON like unclosed arrays or objects."""
+    stripped = cleaned.rstrip()
+    for suffix in [
+        "}",
+        "]}",
+        "\"}]}",
+        "\"}}",
+        "}]}",
+        "\"]}]}",
+    ]:
+        try:
+            return json.loads(sanitize_json_text(stripped + suffix))
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def parse_and_validate_response(
     raw_response: str,
     chunk_index: int,
@@ -175,12 +207,17 @@ def parse_and_validate_response(
         cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
 
-    # Attempt regex cleanup of trailing commas if json fails
+    # Attempt regex cleanup of invalid LaTeX escapes and trailing commas if json fails
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        cleaned_repaired = re.sub(r",\s*([\]}])", r"\1", cleaned)
-        data = json.loads(cleaned_repaired)
+        cleaned_repaired = sanitize_json_text(cleaned)
+        try:
+            data = json.loads(cleaned_repaired)
+        except json.JSONDecodeError:
+            data = repair_json_structure(cleaned)
+            if data is None:
+                raise
 
     raw_blocks = data.get("blocks", [])
     blocks: List[Block] = []
@@ -245,12 +282,15 @@ def parse_and_validate_response(
                 )
             )
         elif b_type == "math":
+            mmode = b.get("math_mode", "block")
+            if mmode == "display" or mmode not in ("inline", "block"):
+                mmode = "block"
             blocks.append(
                 MathBlock(
                     id=b_id,
                     page=page,
                     content=str(b.get("content", "")),
-                    math_mode=b.get("math_mode", "block"),
+                    math_mode=mmode,
                     equation_number=b.get("equation_number"),
                 )
             )
@@ -325,6 +365,10 @@ async def process_chunk_with_llm(
                     "timeout": config.request_timeout_seconds,
                     "response_format": {"type": "json_object"},
                 }
+                if config.context_window is not None:
+                    if "extra_body" not in kwargs:
+                        kwargs["extra_body"] = {}
+                    kwargs["extra_body"]["num_ctx"] = config.context_window
                 api_base = config.api_base or os.environ.get("PDF2MD_API_BASE") or (
                     os.environ.get("OLLAMA_API_BASE") if "ollama" in normalized_model else None
                 )
@@ -346,12 +390,40 @@ async def process_chunk_with_llm(
                 c_tok = getattr(usage, "completion_tokens", 0) or 0
                 t_tok = getattr(usage, "total_tokens", 0) or 0
 
+                finish_reason = response.choices[0].finish_reason if response.choices else None
+
                 logger.info(
                     f"[LLM] Chunk {chunk_index}: {normalized_model} responded in {elapsed:.2f}s "
                     f"({len(raw_text)} bytes, {t_tok} tokens: {p_tok} prompt / {c_tok} completion)"
                 )
 
-                return parse_and_validate_response(raw_text, chunk_index, page_numbers, normalized_model)
+                if finish_reason == "length":
+                    logger.warning(
+                        f"[LLM TRUNCATED] Chunk {chunk_index}: response truncated by token limit "
+                        f"({c_tok}/{config.max_tokens} tokens, finish_reason='{finish_reason}')"
+                    )
+                    raise LlmTruncationException(
+                        f"Chunk {chunk_index} (pages {min(page_numbers)}-{max(page_numbers)}) truncated "
+                        f"by token limit ({c_tok}/{config.max_tokens}, finish_reason='{finish_reason}')"
+                    )
+
+                try:
+                    return parse_and_validate_response(raw_text, chunk_index, page_numbers, normalized_model)
+                except Exception as parse_err:
+                    if c_tok > 0 and c_tok >= config.max_tokens:
+                        logger.warning(
+                            f"[LLM TRUNCATED] Chunk {chunk_index}: response truncated by token limit "
+                            f"({c_tok}/{config.max_tokens} tokens)"
+                        )
+                        raise LlmTruncationException(
+                            f"Chunk {chunk_index} (pages {min(page_numbers)}-{max(page_numbers)}) truncated "
+                            f"by token limit ({c_tok}/{config.max_tokens}): {parse_err}"
+                        ) from parse_err
+                    raise parse_err
+
+            except LlmTruncationException:
+                # Fast fail so pipeline can dynamically subdivide chunk instead of wasting retries
+                raise
 
             except Exception as e:
                 elapsed = time.monotonic() - call_start

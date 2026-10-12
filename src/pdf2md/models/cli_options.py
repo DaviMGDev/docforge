@@ -53,6 +53,7 @@ class LlmConfig(BaseModel):
     max_tokens: int = 8192
     request_timeout_seconds: float = 120.0
     max_retries: int = 3
+    context_window: Optional[int] = None
 
 
 class CliConfig(BaseModel):

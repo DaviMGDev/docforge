@@ -17,6 +17,8 @@ from pdf2md.cache.manager import CacheManager
 from pdf2md.exceptions import (
     CorruptedPdfException,
     InvalidPageRangeException,
+    LlmInferenceException,
+    LlmTruncationException,
     MissingApiKeyException,
 )
 from pdf2md.logging import get_logger
@@ -24,6 +26,7 @@ from pdf2md.models.ast import DocumentAST, DocumentChunkAST, HeadingBlock
 from pdf2md.models.cli_options import CliConfig, OutputFormat
 from pdf2md.models.pipeline import (
     AssetRecord,
+    ChunkDefinition,
     DocumentClassification,
     PipelineMetrics,
 )
@@ -116,105 +119,148 @@ class PipelineRunner:
         # Prepare worker concurrency
         semaphore = asyncio.Semaphore(self.config.concurrency.llm_concurrency)
         dedup_table: Dict[str, AssetRecord] = {}
-        chunk_results: List[Optional[DocumentChunkAST]] = [None] * total_chunks
+        completed_chunks: List[DocumentChunkAST] = []
 
-        # Process chunks with sliding window
-        tasks_in_flight: Dict[int, asyncio.Task] = {}
+        from collections import deque
+        work_queue: deque[ChunkDefinition] = deque(chunks)
+        total_work = len(chunks)
+        next_chunk_index = max([ch.chunk_index for ch in chunks], default=0) + 1
+
+        tasks_in_flight: Dict[asyncio.Task, ChunkDefinition] = {}
         processed_count = 0
 
-        for idx, chunk in enumerate(chunks):
-            if self.interrupted:
-                break
-
-            # 1. Check disk cache
-            chunk_range = (min(chunk.page_numbers), max(chunk.page_numbers))
-            pages_desc = f"pages {chunk_range[0]}-{chunk_range[1]}"
-            if not self.config.no_cache and cache_mgr.is_chunk_cached(chunk_range):
-                cached_ast = cache_mgr.load_chunk_ast(chunk_range)
-                if cached_ast:
-                    logger.info(f"[CACHE HIT] chunk {chunk.chunk_index} ({pages_desc})")
-                    cached_ast.chunk_index = chunk.chunk_index
-                    chunk_results[idx] = cached_ast
+        async def drain_completed(done_set: set[asyncio.Task]):
+            nonlocal processed_count, total_work, next_chunk_index
+            for t in done_set:
+                chunk = tasks_in_flight.pop(t)
+                if t in self._active_tasks:
+                    self._active_tasks.remove(t)
+                try:
+                    res_ast = t.result()
+                    completed_chunks.append(res_ast)
+                    cache_mgr.save_chunk_ast(res_ast)
+                    logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
+                    chunk_range = (min(chunk.page_numbers), max(chunk.page_numbers))
+                    cache_mgr.purge_chunk_renders(chunk_range)
                     processed_count += 1
                     if progress_callback:
-                        progress_callback("chunks", processed_count, total_chunks)
-                    continue
-            elif not self.config.no_cache:
-                logger.info(f"[CACHE MISS] chunk {chunk.chunk_index} ({pages_desc})")
+                        progress_callback("chunks", processed_count, total_work)
+                except LlmTruncationException as trunc_err:
+                    chunk_range = (min(chunk.page_numbers), max(chunk.page_numbers))
+                    cache_mgr.purge_chunk_renders(chunk_range)
+                    if len(chunk.page_numbers) > 1:
+                        logger.warning(
+                            f"[LLM ADAPTIVE SPLIT] Chunk {chunk.chunk_index} (pages {chunk_range[0]}-{chunk_range[1]}) "
+                            f"exceeded token limit. Subdividing into smaller sub-chunks..."
+                        )
+                        pages = chunk.page_numbers
+                        mid = len(pages) // 2
+                        p1, p2 = pages[:mid], pages[mid:]
+                        c1 = ChunkDefinition(
+                            chunk_index=chunk.chunk_index,
+                            start_page=p1[0],
+                            end_page=p1[-1],
+                            page_numbers=p1,
+                            is_contiguous=(p1[-1] - p1[0] + 1 == len(p1)),
+                        )
+                        c2 = ChunkDefinition(
+                            chunk_index=next_chunk_index,
+                            start_page=p2[0],
+                            end_page=p2[-1],
+                            page_numbers=p2,
+                            is_contiguous=(p2[-1] - p2[0] + 1 == len(p2)),
+                        )
+                        next_chunk_index += 1
+                        total_work += 1
+                        work_queue.appendleft(c2)
+                        work_queue.appendleft(c1)
+                    else:
+                        logger.error(f"[LLM FAILED] Single-page chunk {chunk.page_numbers[0]} exceeded token limit: {trunc_err}")
+                        raise LlmInferenceException(
+                            f"Page {chunk.page_numbers[0]} exceeded model maximum token capacity. "
+                            f"Please increase --max-tokens."
+                        ) from trunc_err
 
-            # 2. Sliding window bound
-            while len(tasks_in_flight) >= self.config.concurrency.sliding_window_size:
-                done, _ = await asyncio.wait(
-                    tasks_in_flight.values(), return_when=asyncio.FIRST_COMPLETED
-                )
-                for t in done:
-                    # Find task chunk index
-                    for c_idx, task_obj in list(tasks_in_flight.items()):
-                        if task_obj == t:
-                            res_ast = t.result()
-                            chunk_results[c_idx] = res_ast
-                            cache_mgr.save_chunk_ast(res_ast)
-                            logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
-                            c_chunk = chunks[c_idx]
-                            cache_mgr.purge_chunk_renders((min(c_chunk.page_numbers), max(c_chunk.page_numbers)))
-                            del tasks_in_flight[c_idx]
+        try:
+            while (work_queue or tasks_in_flight) and not self.interrupted:
+                # Dispatch tasks up to sliding window limit
+                while work_queue and len(tasks_in_flight) < self.config.concurrency.sliding_window_size and not self.interrupted:
+                    chunk = work_queue.popleft()
+                    chunk_range = (min(chunk.page_numbers), max(chunk.page_numbers))
+                    pages_desc = f"pages {chunk_range[0]}-{chunk_range[1]}"
+
+                    # 1. Check disk cache
+                    if not self.config.no_cache and cache_mgr.is_chunk_cached(chunk_range):
+                        cached_ast = cache_mgr.load_chunk_ast(chunk_range)
+                        if cached_ast:
+                            logger.info(f"[CACHE HIT] chunk {chunk.chunk_index} ({pages_desc})")
+                            cached_ast.chunk_index = chunk.chunk_index
+                            completed_chunks.append(cached_ast)
                             processed_count += 1
                             if progress_callback:
-                                progress_callback("chunks", processed_count, total_chunks)
+                                progress_callback("chunks", processed_count, total_work)
+                            continue
+                    elif not self.config.no_cache:
+                        logger.info(f"[CACHE MISS] chunk {chunk.chunk_index} ({pages_desc})")
 
-            # 3. Deterministic Extraction
-            chunk_render_dir = cache_mgr.get_chunk_render_dir(chunk_range)
-            extraction_res = extract_chunk(
-                doc=doc,
-                chunk_index=chunk.chunk_index,
-                page_numbers=chunk.page_numbers,
-                cache_chunk_dir=chunk_render_dir,
-                assets_dir=self.config.assets_dir_path,
-                dedup_table=dedup_table,
-                dpi=self.config.dpi,
-            )
+                    # 2. Deterministic Extraction
+                    chunk_render_dir = cache_mgr.get_chunk_render_dir(chunk_range)
+                    extraction_res = extract_chunk(
+                        doc=doc,
+                        chunk_index=chunk.chunk_index,
+                        page_numbers=chunk.page_numbers,
+                        cache_chunk_dir=chunk_render_dir,
+                        assets_dir=self.config.assets_dir_path,
+                        dedup_table=dedup_table,
+                        dpi=self.config.dpi,
+                    )
 
-            # Stage 2.5 Fast-Path Auto Bypass is deprecated (Issue #6).
-            # 100% of chunks route directly to Stage 3 multimodal LLM parsing.
+                    # 3. Multimodal LLM worker task
+                    validate_api_key_for_model(self.config.llm)
+                    task = asyncio.create_task(
+                        process_chunk_with_llm(
+                            chunk_index=chunk.chunk_index,
+                            page_numbers=chunk.page_numbers,
+                            page_images=extraction_res.rendered_images,
+                            raw_texts=extraction_res.raw_texts,
+                            available_assets=extraction_res.extracted_assets,
+                            config=self.config.llm,
+                            semaphore=semaphore,
+                            status_callback=worker_callback,
+                        )
+                    )
+                    self._active_tasks.append(task)
+                    tasks_in_flight[task] = chunk
 
-            # 5. Multimodal LLM worker task
-            validate_api_key_for_model(self.config.llm)
-            task = asyncio.create_task(
-                process_chunk_with_llm(
-                    chunk_index=chunk.chunk_index,
-                    page_numbers=chunk.page_numbers,
-                    page_images=extraction_res.rendered_images,
-                    raw_texts=extraction_res.raw_texts,
-                    available_assets=extraction_res.extracted_assets,
-                    config=self.config.llm,
-                    semaphore=semaphore,
-                    status_callback=worker_callback,
-                )
-            )
-            self._active_tasks.append(task)
-            tasks_in_flight[idx] = task
+                # Wait for running tasks
+                if tasks_in_flight:
+                    return_when = (
+                        asyncio.FIRST_COMPLETED
+                        if (work_queue or len(tasks_in_flight) >= self.config.concurrency.sliding_window_size)
+                        else asyncio.ALL_COMPLETED
+                    )
+                    done, _ = await asyncio.wait(list(tasks_in_flight.keys()), return_when=return_when)
+                    await drain_completed(done)
 
-        # Await remaining tasks
-        if tasks_in_flight and not self.interrupted:
-            done, _ = await asyncio.wait(tasks_in_flight.values())
-            for c_idx, task_obj in tasks_in_flight.items():
-                res_ast = task_obj.result()
-                chunk_results[c_idx] = res_ast
-                cache_mgr.save_chunk_ast(res_ast)
-                logger.debug(f"[CACHE SAVE] chunk {res_ast.chunk_index} saved to cache")
-                c_chunk = chunks[c_idx]
-                cache_mgr.purge_chunk_renders((min(c_chunk.page_numbers), max(c_chunk.page_numbers)))
-                processed_count += 1
-                if progress_callback:
-                    progress_callback("chunks", processed_count, total_chunks)
+        except BaseException:
+            # Cleanly cancel all in-flight and active tasks to prevent leaked task warnings
+            all_pending = list(tasks_in_flight.keys()) + [t for t in self._active_tasks if not t.done()]
+            for t in all_pending:
+                t.cancel()
+            if all_pending:
+                await asyncio.gather(*all_pending, return_exceptions=True)
+            raise
 
         if self.interrupted:
             raise KeyboardInterrupt()
 
         # Step 4: Stitch Chunks
-        valid_chunks = [c for c in chunk_results if c is not None]
+        completed_chunks.sort(key=lambda c: min(c.page_range))
+        for i, c in enumerate(completed_chunks):
+            c.chunk_index = i
+
         stitched_ast = stitch_chunks(
-            chunks=valid_chunks,
+            chunks=completed_chunks,
             source_pdf_hash=pdf_sha256,
             total_pages=total_source_pages,
             no_stitch=self.config.no_stitch,

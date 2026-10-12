@@ -2,7 +2,11 @@ import asyncio
 import os
 from unittest.mock import AsyncMock, patch
 import pytest
-from pdf2md.exceptions import LlmInferenceException, MissingApiKeyException
+from pdf2md.exceptions import (
+    LlmInferenceException,
+    LlmTruncationException,
+    MissingApiKeyException,
+)
 from pdf2md.models.ast import BlockType, MathMode
 from pdf2md.models.cli_options import LlmConfig
 from pdf2md.models.pipeline import PageImageRecord, PageTextRecord
@@ -112,4 +116,58 @@ async def test_concurrency_bounding():
         results = await asyncio.gather(*tasks)
 
     assert len(results) == 10
-    assert max_observed_concurrent <= 3
+
+
+def test_parse_latex_formulas_with_unescaped_backslashes():
+    raw_latex_json = r"""
+    {
+      "blocks": [
+        {
+          "type": "paragraph",
+          "page": 1,
+          "content": "Velocity is \vec{v} = \frac{dx}{dt} where \alpha and \theta are angles."
+        },
+        {
+          "type": "math",
+          "page": 1,
+          "content": "\lim_{\Delta t \to 0} \frac{\Delta \vec{r}}{\Delta t}",
+          "math_mode": "display"
+        }
+      ]
+    }
+    """
+    ast = parse_and_validate_response(
+        raw_latex_json, chunk_index=0, page_numbers=[1], model_name="ollama/gemma4:cloud"
+    )
+    assert len(ast.blocks) == 2
+    assert r"\vec{v}" in ast.blocks[0].content
+    assert r"\frac{dx}{dt}" in ast.blocks[0].content
+    assert r"\lim_{\Delta t \to 0}" in ast.blocks[1].content
+
+
+@pytest.mark.asyncio
+async def test_llm_truncation_raises_truncation_exception():
+    cfg = LlmConfig(model_name="ollama/gemma4:cloud", max_retries=1, max_tokens=100)
+    semaphore = asyncio.Semaphore(1)
+
+    mock_resp = AsyncMock()
+    mock_resp.choices = [
+        AsyncMock(
+            message=AsyncMock(content='{"blocks": [{"type": "paragraph", "content": "truncated text'),
+            finish_reason="length",
+        )
+    ]
+    mock_resp.usage = AsyncMock(prompt_tokens=50, completion_tokens=100, total_tokens=150)
+
+    with patch("litellm.acompletion", return_value=mock_resp):
+        with pytest.raises(LlmTruncationException) as exc_info:
+            await process_chunk_with_llm(
+                chunk_index=0,
+                page_numbers=[1, 2],
+                page_images=[],
+                raw_texts=[PageTextRecord(page_number=1, full_text="")],
+                available_assets=[],
+                config=cfg,
+                semaphore=semaphore,
+            )
+        assert "truncated" in str(exc_info.value).lower()

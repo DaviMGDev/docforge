@@ -45,10 +45,22 @@ def test_functional_toc_synthesized_from_bookmarks():
         stitched_at="2026-10-12T00:00:00Z",
     )
     md = emit_markdown(doc_ast, toc_items, marker_mode=PageMarkerMode.ANCHOR, include_toc=True)
-    assert "## Table of Contents" in md
-    assert "- [1. Introduction](#1-introduction) *(p. 3)*" in md
-    assert "  - [1.1 Problem Statement](#11-problem-statement) *(p. 4)*" in md
-    assert "- [2. Methodology](#2-methodology) *(p. 12)*" in md
+    assert "## Table of Contents\n\n" in md
+    assert "- [1. Introduction](#1-introduction) *(p. 3)*\n" in md
+    assert "  - [1.1 Problem Statement](#11-problem-statement) *(p. 4)*\n" in md
+    assert "- [2. Methodology](#2-methodology) *(p. 12)*\n" in md
+
+
+def test_deduplicate_repeated_ast_headings_in_toc():
+    ast_headings = [
+        HeadingBlock(page=1, level=1, content="Slide Topic", slug="slide-topic"),
+        HeadingBlock(page=2, level=1, content="Slide Topic", slug="slide-topic-1"),
+        HeadingBlock(page=3, level=2, content="Details", slug="details"),
+    ]
+    toc_items = generate_interactive_toc([], ast_headings)
+    assert len(toc_items) == 2
+    assert toc_items[0].title == "Slide Topic"
+    assert toc_items[1].title == "Details"
 
 
 def test_fallback_toc_link_to_page_anchor():

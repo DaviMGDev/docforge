@@ -1,0 +1,100 @@
+# Component Contract: Local Deterministic Extractor Interface
+# File: specs/contracts/extractor.contract
+# Component: Extractor (PyMuPDF / fitz wrapper)
+
+"""
+Formal interface contract for local deterministic PDF extraction, page image
+rendering, raw text parsing, and embedded asset deduplication.
+"""
+
+INTERFACE DeterministicExtractor {
+
+    """
+    Validates PDF integrity and extracts document-level metadata without loading all pages.
+    """
+    METHOD inspect_document(
+        pdf_path: String
+    ) -> DocumentMetadata
+    REQUIRES:
+        - file_exists(pdf_path) == true
+        - is_readable(pdf_path) == true
+    ENSURES:
+        - result.total_pages >= 1
+        - length(result.pdf_sha256) == 64
+        - result.is_encrypted == false (or exception is raised)
+    RAISES:
+        - FileNotFoundException: if pdf_path does not exist
+        - CorruptPdfException: if PDF xref/header cannot be parsed or repaired
+        - EncryptedPdfException: if PDF requires password and none provided
+
+    """
+    Renders a single PDF page to a high-resolution PNG image byte buffer or disk file.
+    """
+    METHOD render_page_image(
+        pdf_path: String,
+        page_number: Integer,  # 1-based index
+        dpi: Integer = 150,
+        output_file_path: Optional[String] = None
+    ) -> PageImageRecord
+    REQUIRES:
+        - 1 <= page_number <= inspect_document(pdf_path).total_pages
+        - 72 <= dpi <= 400
+    ENSURES:
+        - result.page_number == page_number
+        - result.dpi == dpi
+        - result.byte_size > 0
+        - if output_file_path != None: file_exists(output_file_path) == true
+        - memory allocated for raw pixmap is immediately unreferenced after write
+    RAISES:
+        - PageOutOfRangeException: if page_number is invalid
+        - RenderException: if rendering engine encounters memory exhaustion or font failure
+
+    """
+    Extracts raw text spans, bounding boxes, font sizes, and styles from a page.
+    No OCR is performed.
+    """
+    METHOD extract_raw_page_text(
+        pdf_path: String,
+        page_number: Integer   # 1-based index
+    ) -> PageTextRecord
+    REQUIRES:
+        - 1 <= page_number <= inspect_document(pdf_path).total_pages
+    ENSURES:
+        - result.page_number == page_number
+        - result.full_text != None
+        - for span in result.spans: span.font_size > 0
+    RAISES:
+        - PageOutOfRangeException: if page_number is out of bounds
+
+    """
+    Extracts embedded raster and vector images directly from the PDF stream,
+    deduplicates them globally via SHA-256, and writes new assets to disk.
+    """
+    METHOD extract_page_assets(
+        pdf_path: String,
+        page_number: Integer,
+        assets_dir: String,
+        dedup_table: InOut[Map[String, AssetRecord]] # SHA-256 -> AssetRecord mapping
+    ) -> List[AssetRecord]
+    REQUIRES:
+        - 1 <= page_number <= inspect_document(pdf_path).total_pages
+        - dir_exists_or_creatable(assets_dir) == true
+    ENSURES:
+        - all returned records exist on disk at asset.file_path
+        - for any two assets with identical byte hash, exactly one file exists on disk
+        - tiny graphics (< 24x24 px) are filtered out and omitted
+    RAISES:
+        - DiskWriteException: if destination assets directory is unwritable
+
+    """
+    Extracts native PDF bookmark outline (TOC) hierarchy.
+    """
+    METHOD extract_native_toc(
+        pdf_path: String
+    ) -> List[OutlineNode]
+    REQUIRES:
+        - inspect_document(pdf_path) succeeds
+    ENSURES:
+        - returns empty list if PDF has no embedded outline/bookmarks
+        - all OutlineNode.page_number values are >= 1
+}

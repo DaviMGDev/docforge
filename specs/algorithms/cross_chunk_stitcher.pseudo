@@ -1,0 +1,168 @@
+# Algorithm Specification: Cross-Chunk AST Stitcher
+# File: specs/algorithms/cross_chunk_stitcher.pseudo
+# Purpose: Stitch sequential chunk ASTs, reconcile boundary breaks, and suppress repetitive chrome.
+
+ALGORITHM stitch_chunks(
+    chunks: List[DocumentChunkAST],
+    source_pdf_hash: String,
+    total_pages: Integer,
+    no_stitch: Boolean = false
+) -> DocumentAST
+    """
+    Combines an ordered list of DocumentChunkAST instances into a single DocumentAST.
+    Heals split paragraphs and tables, suppresses running headers/footers unless no_stitch is true.
+    """
+    if len(chunks) == 0:
+        return DocumentAST(
+            source_pdf_hash = source_pdf_hash,
+            total_pages = total_pages,
+            selected_pages = [],
+            chunks_count = 0,
+            blocks = [],
+            toc_items = [],
+            stitched_at = current_iso_timestamp()
+        )
+
+    # If user explicitly disables heuristic stitching, perform strict block concatenation
+    if no_stitch:
+        concatenated_blocks = []
+        selected_pages = []
+        for chunk in chunks:
+            selected_pages.extend(range_to_list(chunk.page_range))
+            concatenated_blocks.extend(chunk.blocks)
+        return DocumentAST(
+            source_pdf_hash = source_pdf_hash,
+            total_pages = total_pages,
+            selected_pages = deduplicate_sorted(selected_pages),
+            chunks_count = len(chunks),
+            blocks = concatenated_blocks,
+            toc_items = [],
+            stitched_at = current_iso_timestamp()
+        )
+
+    stitched_blocks = []
+    selected_pages = []
+
+    # Phase 1: Flatten chunk blocks and perform inter-chunk boundary healing
+    for chunk_idx in 0..(len(chunks) - 1):
+        chunk = chunks[chunk_idx]
+        selected_pages.extend(range_to_list(chunk.page_range))
+
+        if len(chunk.blocks) == 0:
+            continue
+
+        chunk_blocks = chunk.blocks
+
+        # If previous blocks exist, check boundary transition between stitched_blocks[-1] and chunk_blocks[0]
+        if len(stitched_blocks) > 0 and len(chunk_blocks) > 0:
+            trailing_block = stitched_blocks[-1]
+            leading_block = chunk_blocks[0]
+
+            # Case A: Paragraph split across boundary
+            if is_split_paragraph(trailing_block, leading_block):
+                # Merge into trailing block
+                trailing_block.content = trailing_block.content + " " + leading_block.content
+                trailing_block.is_continuation = true
+                # Pop leading block from chunk_blocks before appending
+                chunk_blocks = chunk_blocks[1:]
+
+            # Case B: Table split across boundary
+            elif is_split_table(trailing_block, leading_block):
+                merged_table = merge_table_blocks(trailing_block, leading_block)
+                stitched_blocks[-1] = merged_table
+                chunk_blocks = chunk_blocks[1:]
+
+        stitched_blocks.extend(chunk_blocks)
+
+    # Phase 2: Running Header and Footer Suppression
+    filtered_blocks = suppress_running_chrome(stitched_blocks)
+
+    # Phase 3: Normalize Heading Hierarchy
+    normalized_blocks = normalize_heading_hierarchy(filtered_blocks)
+
+    # Phase 4: Deterministic Slug Allocation
+    allocated_slugs = Set()
+    for block in normalized_blocks:
+        if block.type == BlockType.HEADING:
+            block.slug = generate_unique_slug(block.content, allocated_slugs)
+
+    return DocumentAST(
+        source_pdf_hash = source_pdf_hash,
+        total_pages = total_pages,
+        selected_pages = deduplicate_sorted(selected_pages),
+        chunks_count = len(chunks),
+        blocks = normalized_blocks,
+        toc_items = [],
+        stitched_at = current_iso_timestamp()
+    )
+END ALGORITHM
+
+
+ALGORITHM is_split_paragraph(trailing: Block, leading: Block) -> Boolean
+    """
+    Returns true if trailing and leading blocks represent a continuous paragraph
+    severed across a page/chunk boundary.
+    """
+    if trailing.type != BlockType.PARAGRAPH or leading.type != BlockType.PARAGRAPH:
+        return false
+
+    trailing_text = trailing.content.strip()
+    leading_text = leading.content.strip()
+
+    if len(trailing_text) == 0 or len(leading_text) == 0:
+        return false
+
+    terminal_punctuation = [".", "!", "?", "...", ":", "\"", "”"]
+    ends_with_terminal = any(trailing_text.endswith(p) for p in terminal_punctuation)
+
+    # If trailing text does NOT end with terminal punctuation, and leading starts with lowercase or continuation
+    if not ends_with_terminal:
+        first_char = leading_text[0]
+        if first_char.islower() or first_char in [",", ";", ")", "]", "}"]:
+            return true
+
+    # Also handle hyphenated words at line wrap e.g., "architec-" and "ture"
+    if trailing_text.endswith("-") and len(trailing_text) > 1 and trailing_text[-2].isalpha():
+        trailing.content = trailing_text[:-1] # Remove trailing hyphen
+        return true
+
+    return false
+END ALGORITHM
+
+
+ALGORITHM suppress_running_chrome(blocks: List[Block]) -> List[Block]
+    """
+    Detects and prunes repetitive headers/footers that appear in top/bottom
+    margins across multiple pages.
+    """
+    page_to_blocks = group_blocks_by_page(blocks)
+    candidate_strings = Map() # String -> count of pages where it appears
+
+    for page_num, p_blocks in page_to_blocks.items():
+        if len(p_blocks) == 0: continue
+        first_block = p_blocks[0]
+        last_block = p_blocks[-1]
+
+        # Check candidate first line (running header)
+        if first_block.type == BlockType.PARAGRAPH and len(first_block.content) < 80:
+            norm_header = normalize_chrome_text(first_block.content)
+            candidate_strings[norm_header] = candidate_strings.get(norm_header, 0) + 1
+
+        # Check candidate last line (running footer / page number)
+        if last_block.type == BlockType.PARAGRAPH and len(last_block.content) < 40:
+            norm_footer = normalize_chrome_text(last_block.content)
+            candidate_strings[norm_footer] = candidate_strings.get(norm_footer, 0) + 1
+
+    # Any margin string appearing on >= 3 distinct pages is classified as chrome
+    chrome_strings = Set([s for s, count in candidate_strings.items() if count >= 3])
+
+    result = []
+    for block in blocks:
+        if block.type == BlockType.PARAGRAPH:
+            norm_text = normalize_chrome_text(block.content)
+            if norm_text in chrome_strings:
+                continue # Suppress running chrome
+        result.append(block)
+
+    return result
+END ALGORITHM

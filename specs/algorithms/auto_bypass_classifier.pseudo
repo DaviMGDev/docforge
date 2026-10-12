@@ -1,0 +1,81 @@
+# Algorithm Specification: Fast-Path Hybrid Bypass Classifier
+# File: specs/algorithms/auto_bypass_classifier.pseudo
+# Purpose: Heuristic classifier to identify simple prose pages that bypass multimodal LLM vision calls.
+
+ALGORITHM classify_page(page: FitzPage) -> DocumentClassification
+    """
+    Evaluates whether a single PDF page is trivial single-column prose
+    or requires multimodal LLM vision parsing.
+    """
+    # Check 1: Embedded raster/vector images
+    images = page.get_images(full=True)
+    if len(images) > 0:
+        return DocumentClassification.COMPLEX
+
+    # Check 2: Vector drawing paths (charts, table borders, vector diagrams)
+    drawings = page.get_drawings()
+    # Filter out single horizontal dividing rules
+    non_rule_drawings = 0
+    for d in drawings:
+        bbox = d["rect"]
+        is_horizontal_rule = (bbox.y1 - bbox.y0 < 3.0) and (bbox.x1 - bbox.x0 > 100.0)
+        if not is_horizontal_rule:
+            non_rule_drawings += 1
+
+    if non_rule_drawings > 2:
+        return DocumentClassification.COMPLEX
+
+    # Check 3: Extract text blocks and analyze layout geometry
+    text_blocks = page.get_text("blocks") # Returns (x0, y0, x1, y1, text, block_no, block_type)
+    if len(text_blocks) == 0:
+        # Blank page is trivial
+        return DocumentClassification.TRIVIAL_PROSE
+
+    # Check 4: Multi-column detection via horizontal overlap analysis
+    sorted_blocks = sort_by_y0(text_blocks)
+    page_width = page.rect.width
+
+    for i in 0..(len(sorted_blocks) - 2):
+        b1 = sorted_blocks[i]
+        b2 = sorted_blocks[i + 1]
+
+        # If vertical spans overlap significantly but horizontal bounds are disjoint -> multi-column
+        vertical_overlap = max(0, min(b1[3], b2[3]) - max(b1[1], b2[1]))
+        if vertical_overlap > 15.0:
+            horizontal_disjoint = (b1[2] < b2[0] - 10.0) or (b2[2] < b1[0] - 10.0)
+            if horizontal_disjoint:
+                return DocumentClassification.COMPLEX
+
+    # Check 5: Mathematical glyph & tabular structure heuristics
+    full_text = page.get_text("text")
+    math_symbols = ["∑", "∫", "∂", "√", "±", "≤", "≥", "≠", "≈", "∈", "∀", "∃", "∞", "×", "÷"]
+    for sym in math_symbols:
+        if sym in full_text:
+            return DocumentClassification.COMPLEX
+
+    # Check 6: Tabular row/tab delimiters
+    tabular_lines = 0
+    for line in full_text.split("\n"):
+        if "\t" in line or "    " in line:
+            tabular_lines += 1
+    if tabular_lines > 3:
+        return DocumentClassification.COMPLEX
+
+    return DocumentClassification.TRIVIAL_PROSE
+END ALGORITHM
+
+
+ALGORITHM classify_chunk(doc: FitzDocument, chunk: ChunkDefinition) -> DocumentClassification
+    """
+    Classifies a chunk: If ALL pages in the chunk are TRIVIAL_PROSE,
+    the entire chunk is routed to direct text layout bypass.
+    Otherwise, the chunk requires LLM multimodal analysis.
+    """
+    for page_num in chunk.page_numbers:
+        page = doc.load_page(page_num - 1)
+        page_class = classify_page(page)
+        if page_class == DocumentClassification.COMPLEX:
+            return DocumentClassification.COMPLEX
+
+    return DocumentClassification.TRIVIAL_PROSE
+END ALGORITHM

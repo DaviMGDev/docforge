@@ -1,0 +1,138 @@
+# Component Contract: Intermediate Material JSON Schema Contract
+# File: specs/contracts/material_json.contract
+# Schema: JSON Schema Draft-07
+
+"""
+Formal JSON Schema Draft-07 specification for chunk AST checkpoints and the unified
+intermediate representation (material.json).
+"""
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://specs.pdf2md.dev/schemas/material.json",
+  "title": "DocumentChunkAST",
+  "description": "Structured representation of an extracted and LLM-parsed document chunk",
+  "type": "object",
+  "required": ["chunk_index", "page_range", "blocks"],
+  "properties": {
+    "chunk_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "0-based chunk sequence index"
+    },
+    "page_range": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "1-based inclusive [start_page, end_page]"
+    },
+    "bypass_used": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if processed via fast-path prose bypass"
+    },
+    "fallback_used": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if processed via deterministic raw-text fallback"
+    },
+    "llm_model": {
+      "type": "string",
+      "description": "Identifier of the LLM model used for extraction"
+    },
+    "blocks": {
+      "type": "array",
+      "description": "Ordered sequence of semantic content blocks",
+      "items": {
+        "$ref": "#/definitions/Block"
+      }
+    }
+  },
+  "definitions": {
+    "Block": {
+      "type": "object",
+      "required": ["type", "page"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique block identifier"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based page number where block originates"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "heading",
+            "paragraph",
+            "list",
+            "table",
+            "code",
+            "math",
+            "image",
+            "callout",
+            "thematic_break",
+            "raw_fallback"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "description": "Textual content, markdown body, or raw text"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "Heading level for type=heading"
+        },
+        "language": {
+          "type": "string",
+          "description": "Programming language for type=code"
+        },
+        "math_mode": {
+          "type": "string",
+          "enum": ["inline", "block"],
+          "description": "LaTeX formula rendering mode for type=math"
+        },
+        "asset_path": {
+          "type": "string",
+          "description": "Relative file path for type=image"
+        },
+        "caption": {
+          "type": "string",
+          "description": "Caption or title for tables, code listings, and images"
+        },
+        "callout_type": {
+          "type": "string",
+          "enum": ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"],
+          "description": "Admonition category for type=callout"
+        },
+        "header": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Header column names for type=table"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "description": "Table rows for type=table"
+        },
+        "ordered": {
+          "type": "boolean",
+          "description": "True for numbered lists, false for bullet lists (type=list)"
+        },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List items for type=list"
+        }
+      }
+    }
+  }
+}

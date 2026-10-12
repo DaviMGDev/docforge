@@ -1,0 +1,74 @@
+# Component Contract: CLI & Execution Environment Contract
+# File: specs/contracts/cli.contract
+# Component: CLI Entry Point (Typer + Rich)
+
+"""
+Formal contract for command-line arguments, environment variable discovery,
+exit codes, signal handling, and disk layout guarantees.
+"""
+
+INTERFACE CommandLineInterface {
+
+    """
+    Standard CLI invocation command syntax.
+    """
+    COMMAND pdf2md(
+        input_pdf: Positional[String],
+        output: Option[String] = None,              # Short: -o, default: <stem>.md or <stem>.json
+        format: Option[String] = "md",              # Short: -f, choices: md|json|both, default: md
+        pages: Option[String] = None,               # Short: -p, default: None (all)
+        page_markers: Option[String] = "anchor",    # Short: -m, choices: anchor|badge|comment|none
+        toc: Option[Boolean] = true,                # Flags: --toc / --no-toc
+        assets_dir: Option[String] = "./assets",    # Short: -a
+        chunk_size: Option[Integer] = 4,            # Short: -c, 1..16, default: 4
+        adaptive_chunking: Option[Boolean] = true,  # Flags: --adaptive-chunking / --no-adaptive
+        no_stitch: Option[Boolean] = false,         # Flag: --no-stitch
+        llm_concurrency: Option[Integer] = 3,       # Fixed default: 3
+        model: Option[String] = "gpt-4o",           # Target model
+        dpi: Option[Integer] = 150,                 # Rendering DPI
+        cache_dir: Option[String] = ".cache",       # Checkpoint dir
+        no_cache: Option[Boolean] = false,          # Invalidate cache flag
+        auto_bypass: Option[Boolean] = false,       # Fast-path classifier flag (default: false, opt-in)
+        verbose: Option[Boolean] = false            # Short: -v
+    ) -> ExitCode
+
+    """
+    Exit Code Specification
+    """
+    EXIT_CODES:
+        0: SUCCESS - Document converted completely without error.
+        1: GENERAL_ERROR - Unhandled internal error.
+        2: CORRUPT_PDF - PDF is corrupted and cannot be repaired.
+        3: ENCRYPTED_PDF - PDF is password protected.
+        4: INVALID_ARGUMENTS - Page range syntax error or invalid CLI arguments.
+        5: AUTHENTICATION_ERROR - Missing or invalid LLM provider API key.
+        130: USER_INTERRUPT - Process terminated gracefully via SIGINT (Ctrl+C).
+
+    """
+    Environment Variables Contract
+    """
+    ENVIRONMENT_VARIABLES:
+        - OPENAI_API_KEY: Used when model starts with "gpt-", "o1-", or OpenAI prefix.
+        - ANTHROPIC_API_KEY: Used when model starts with "claude-".
+        - GEMINI_API_KEY: Used when model starts with "gemini-".
+        - PDF2MD_CACHE_DIR: Overrides default cache directory (".cache").
+        - PDF2MD_DPI: Overrides default rendering DPI (150).
+
+    """
+    Terminal Output Contract (Rich)
+    """
+    TERMINAL_OUTPUT:
+        - stdout: Rich live dashboard and progress bars.
+        - stderr: Structured warning and error logs with timestamps and severity.
+        - If stdout is NOT a TTY (pipe/redirect): disable interactive animations, emit plain logs.
+
+    """
+    Directory Layout Contract
+    """
+    FILESYSTEM_GUARANTEES:
+        - If format == 'md': <output>.md is created upon successful completion.
+        - If format == 'json': <output>.json (unified DocumentAST) is created upon completion.
+        - If format == 'both': both <output>.md and <output>.json are created upon completion.
+        - assets_dir/ contains all extracted, non-duplicate images referenced in output.md.
+        - .cache/<pdf_sha256>/ stores chunk-level checkpoints.
+}

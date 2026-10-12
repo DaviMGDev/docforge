@@ -1,0 +1,153 @@
+# Algorithm Specification: Page Range Parser & Chunker
+# File: specs/algorithms/page_range_parser.pseudo
+# Purpose: Parse arbitrary page selection syntax into normalized, sorted pages and chunk definitions.
+
+ALGORITHM parse_page_selection(range_str: String, total_pages: Integer) -> List[Integer]
+    """
+    Parses print-range ("1-50, 100") or Python slice ("[0:50] + [99:100]") notation
+    into a deduplicated, sorted list of 1-based page indices.
+    """
+    selected_pages = Set()
+
+    if range_str is None or range_str.strip() == "" or range_str.strip().lower() == "all":
+        return [p for p in 1..total_pages]
+
+    # Split combined expressions (handles comma separation and '+' slice joins)
+    cleaned_str = range_str.replace("+", ",")
+    tokens = [t.strip() for t in cleaned_str.split(",") if t.strip() != ""]
+
+    for token in tokens:
+        # Case 1: Python slice notation e.g., "[0:10]", "[:5]", "[10:]", "[::2]"
+        if token.startswith("[") and token.endswith("]"):
+            slice_content = token[1:-1].strip()
+            parts = slice_content.split(":")
+
+            start = None
+            stop = None
+            step = 1
+
+            if len(parts) == 1:
+                # Single index e.g., "[5]" (0-based)
+                idx = parse_int(parts[0])
+                resolved_idx = idx if idx >= 0 else total_pages + idx
+                if 0 <= resolved_idx < total_pages:
+                    selected_pages.add(resolved_idx + 1)
+                continue
+            elif len(parts) == 2:
+                start = parse_int(parts[0]) if parts[0].strip() != "" else 0
+                stop = parse_int(parts[1]) if parts[1].strip() != "" else total_pages
+            elif len(parts) == 3:
+                start = parse_int(parts[0]) if parts[0].strip() != "" else 0
+                stop = parse_int(parts[1]) if parts[1].strip() != "" else total_pages
+                step = parse_int(parts[2]) if parts[2].strip() != "" else 1
+
+            # Resolve negative bounds relative to total_pages
+            if start < 0: start = max(0, total_pages + start)
+            if stop < 0: stop = max(0, total_pages + stop)
+            start = clamp(start, 0, total_pages)
+            stop = clamp(stop, 0, total_pages)
+
+            for i in range(start, stop, step):
+                if 0 <= i < total_pages:
+                    selected_pages.add(i + 1) # Convert to 1-based
+
+        # Case 2: Print range notation e.g., "1-200" or "42"
+        elif "-" in token:
+            bounds = token.split("-")
+            if len(bounds) != 2:
+                raise InvalidPageRangeException("Invalid range token: " + token)
+            start_p = parse_int(bounds[0].strip())
+            end_p = parse_int(bounds[1].strip())
+            if start_p > end_p:
+                raise InvalidPageRangeException("Start page cannot exceed end page: " + token)
+            for p in start_p..end_p:
+                if 1 <= p <= total_pages:
+                    selected_pages.add(p)
+        else:
+            p = parse_int(token)
+            if 1 <= p <= total_pages:
+                selected_pages.add(p)
+
+    if is_empty(selected_pages):
+        raise InvalidPageRangeException("No valid pages selected within document range (1 to " + total_pages + ")")
+
+    return sort_ascending(list(selected_pages))
+END ALGORITHM
+
+
+ALGORITHM calculate_adaptive_chunk_size(
+    doc: FitzDocument,
+    page_numbers: List[Integer],
+    base_chunk_size: Integer = 4
+) -> Integer
+    """
+    Dynamically adjusts chunk size based on page density:
+    - High-density text (> 800 words/page) or heavy graphics (> 3 images/page)
+      scales down chunk size to 1 or 2 pages to prevent LLM context/token limits.
+    """
+    sample_pages = page_numbers[:min(5, len(page_numbers))]
+    total_words = 0
+    total_images = 0
+
+    for p_num in sample_pages:
+        page = doc.load_page(p_num - 1)
+        total_words += len(page.get_text("words"))
+        total_images += len(page.get_images())
+
+    avg_words = total_words / max(1, len(sample_pages))
+    avg_images = total_images / max(1, len(sample_pages))
+
+    # Dense pages heuristic
+    if avg_words > 1200 or avg_images > 4:
+        return 1
+    elif avg_words > 700 or avg_images > 2:
+        return min(2, base_chunk_size)
+    else:
+        return base_chunk_size
+END ALGORITHM
+
+
+ALGORITHM partition_into_chunks(pages: List[Integer], max_chunk_size: Integer = 4) -> List[ChunkDefinition]
+    """
+    Partitions normalized pages into chunks of size <= max_chunk_size (default 4).
+    Severes chunks at non-contiguous page jumps.
+    """
+    chunks = []
+    current_pages = []
+    chunk_index = 0
+
+    for i in 0..(len(pages) - 1):
+        page = pages[i]
+
+        # Check contiguity with preceding page
+        if len(current_pages) > 0:
+            prev_page = current_pages[-1]
+            is_contiguous = (page == prev_page + 1)
+            is_full = (len(current_pages) >= max_chunk_size)
+
+            # If full OR non-contiguous, close current chunk
+            if is_full or not is_contiguous:
+                chunks.append(ChunkDefinition(
+                    chunk_index = chunk_index,
+                    start_page = current_pages[0],
+                    end_page = current_pages[-1],
+                    page_numbers = current_pages,
+                    is_contiguous = (current_pages[-1] - current_pages[0] + 1 == len(current_pages))
+                ))
+                chunk_index += 1
+                current_pages = []
+
+        current_pages.append(page)
+
+    # Append remaining pages
+    if len(current_pages) > 0:
+        chunks.append(ChunkDefinition(
+            chunk_index = chunk_index,
+            start_page = current_pages[0],
+            end_page = current_pages[-1],
+            page_numbers = current_pages,
+            is_contiguous = (current_pages[-1] - current_pages[0] + 1 == len(current_pages))
+        ))
+
+    return chunks
+END ALGORITHM

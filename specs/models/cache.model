@@ -1,0 +1,73 @@
+# Data Model Specification: Cache & Checkpoint Models
+# File: specs/models/cache.model
+# Language/Notation: Formal Typed Schema (Pydantic / Typed AST Notation)
+
+"""
+Cache structures, manifest schemas, idempotency tokens, and resume checkpoints
+for persistent execution resumption in pdf2md.
+"""
+
+enum CacheStatus {
+    HIT = "hit"
+    MISS = "miss"
+    INVALIDATED = "invalidated"
+    CORRUPTED = "corrupted"
+}
+
+enum InvalidationReason {
+    NONE = "none"
+    FORCE_FLAG = "force_flag"
+    CHECKSUM_MISMATCH = "checksum_mismatch"
+    MODEL_MISMATCH = "model_mismatch"
+    PROMPT_VERSION_MISMATCH = "prompt_version_mismatch"
+    DPI_MISMATCH = "dpi_mismatch"
+    CHUNK_SIZE_MISMATCH = "chunk_size_mismatch"
+}
+
+struct CacheConfig {
+    cache_dir: String                # Root cache directory path (default: .cache)
+    pdf_sha256: String               # Digest of source PDF
+    cache_root_path: String          # .cache/<pdf_sha256>/
+    enabled: Boolean = true          # False when --no-cache is passed
+}
+
+struct ChunkCacheEntry {
+    chunk_index: Integer             # 0-based chunk sequence index
+    page_range: Tuple[Integer, Integer] # [start_page, end_page]
+    ast_json_path: String            # Relative path to cached chunk JSON (chunks/chunk_0000.json)
+    sha256_ast: String               # Checksum of serialized AST JSON
+    bypass_used: Boolean             # True if generated via Stage 2.5 fast-path
+    fallback_used: Boolean           # True if generated via raw-text fallback
+    timestamp_utc: String            # Creation timestamp ISO-8601
+    status: CacheStatus = CacheStatus.HIT
+
+    invariant: chunk_index >= 0
+}
+
+struct CacheManifest {
+    version: String = "1.0.0"        # Cache manifest format version
+    pdf_name: String                 # Base name of the input PDF file
+    pdf_sha256: String               # 64-character hex SHA-256 digest
+    pdf_size_bytes: Integer          # File size in bytes
+    total_pages: Integer             # Total pages in input PDF
+    chunk_size: Integer              # Maximum pages per chunk configured
+    dpi: Integer                     # Render resolution (e.g., 150)
+    model_name: String               # Multimodal LLM model string (e.g., "gpt-4o")
+    prompt_version: String           # Hash or version string of system/user prompts
+    created_at: String               # ISO-8601 UTC timestamp
+    last_updated_at: String          # ISO-8601 UTC timestamp
+    is_complete: Boolean = false     # True when all chunks for the job have finished
+    completed_chunks: List[ChunkCacheEntry] = [] # List of finished chunk entries
+
+    invariant: length(pdf_sha256) == 64
+    invariant: total_pages >= 1
+    invariant: chunk_size >= 1
+}
+
+struct ResumeCheckpoint {
+    can_resume: Boolean              # True if partial cache exists and matches current config
+    invalidation_reason: InvalidationReason = InvalidationReason.NONE
+    cached_chunk_indices: List[Integer] = [] # Indices of chunks already done and valid
+    pending_chunk_indices: List[Integer] = [] # Indices of chunks remaining to be processed
+    reusable_ast_entries: List[ChunkCacheEntry] = [] # Cached entries ready for immediate stitching
+}

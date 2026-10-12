@@ -1,0 +1,133 @@
+# Algorithm Specification: CommonMark / GFM Markdown Serializer
+# File: specs/algorithms/markdown_emitter.pseudo
+# Purpose: Deterministically serialize unified DocumentAST into lint-compliant CommonMark / GFM.
+
+ALGORITHM emit_markdown(
+    doc_ast: DocumentAST,
+    toc_items: List[TocItem],
+    marker_mode: PageMarkerMode,
+    include_toc: Boolean
+) -> String
+    """
+    Serializes a DocumentAST into a complete CommonMark/GFM Markdown document string.
+    Injects TOC and page boundary markers according to settings.
+    """
+    output_lines = []
+    current_page = 0
+
+    # 1. Emit Interactive Table of Contents at the top
+    if include_toc and len(toc_items) > 0:
+        output_lines.append("## Table of Contents\n")
+        for item in toc_items:
+            indent = "  " * (item.level - 1)
+            output_lines.append(indent + "- [" + item.title + "](" + item.target_slug + ") *(p. " + item.target_page + ")*")
+        output_lines.append("\n---\n")
+
+    # 2. Iterate through blocks and render
+    for block in doc_ast.blocks:
+        # Check if page boundary transitioned
+        if block.page != current_page:
+            current_page = block.page
+            marker_str = format_page_marker(current_page, marker_mode)
+            if marker_str != "":
+                output_lines.append(marker_str)
+
+        rendered_block = render_single_block(block)
+        if rendered_block != "":
+            output_lines.append(rendered_block)
+            output_lines.append("\n") # Blank line separation between blocks
+
+    return join_strings(output_lines)
+END ALGORITHM
+
+
+ALGORITHM format_page_marker(page_num: Integer, mode: PageMarkerMode) -> String
+    """
+    Formats the page navigation marker for the given mode.
+    """
+    if mode == PageMarkerMode.ANCHOR:
+        return '<a id="page-' + page_num + '"></a>\n<!-- [Page ' + page_num + '] -->\n\n'
+    elif mode == PageMarkerMode.BADGE:
+        return '<small class="pdf-page-indicator">📄 Page ' + page_num + '</small>\n---\n\n'
+    elif mode == PageMarkerMode.COMMENT:
+        return '<!-- [Page ' + page_num + '] -->\n\n'
+    else: # NONE
+        return ""
+END ALGORITHM
+
+
+ALGORITHM render_single_block(block: Block) -> String
+    """
+    Serializes an individual block into Markdown representation.
+    """
+    if block.type == BlockType.HEADING:
+        prefix = "#" * block.level
+        # Emit standard markdown heading with HTML anchor for deep linking
+        return prefix + " " + block.content + " {#" + block.slug + "}\n"
+
+    elif block.type == BlockType.PARAGRAPH:
+        return block.content + "\n"
+
+    elif block.type == BlockType.CODE:
+        lang = block.language if block.language else ""
+        header = "```" + lang + "\n"
+        footer = "\n```\n"
+        caption = ("*" + block.caption + "*\n\n") if block.caption else ""
+        return header + block.content.rstrip() + footer + caption
+
+    elif block.type == BlockType.MATH:
+        if block.math_mode == MathMode.BLOCK:
+            eq_num = (" \\tag{" + block.equation_number + "}") if block.equation_number else ""
+            return "$$\n" + block.content.strip() + eq_num + "\n$$\n"
+        else:
+            return "$" + block.content.strip() + "$"
+
+    elif block.type == BlockType.TABLE:
+        if block.raw_html is not None and block.raw_html.strip() != "":
+            return block.raw_html.strip() + "\n"
+        else:
+            return render_gfm_table(block.header, block.rows, block.caption)
+
+    elif block.type == BlockType.IMAGE:
+        caption_str = ("\n*" + block.caption + "*\n") if block.caption else ""
+        return "![" + block.alt_text + "](" + block.asset_path + ")" + caption_str
+
+    elif block.type == BlockType.CALLOUT:
+        lines = block.content.split("\n")
+        title_prefix = (" **" + block.title + "**\n>") if block.title else ""
+        quoted_lines = ["> " + line for line in lines]
+        return "> [!" + block.callout_type + "]" + title_prefix + "\n" + join_lines(quoted_lines) + "\n"
+
+    elif block.type == BlockType.THEMATIC_BREAK:
+        return "---\n"
+
+    elif block.type == BlockType.RAW_FALLBACK:
+        warning_banner = "> [!WARNING] Page " + block.page + ": " + block.warning_message + "\n\n"
+        return warning_banner + block.content + "\n"
+
+    return ""
+END ALGORITHM
+
+
+ALGORITHM render_gfm_table(header: List[String], rows: List[List[String]], caption: Optional[String]) -> String
+    """
+    Renders standard GFM pipe table with aligned separators.
+    """
+    lines = []
+    if caption:
+        lines.append("*" + caption + "*\n")
+
+    # Header line
+    lines.append("| " + " | ".join(header) + " |")
+    # Separator line
+    lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+    # Rows
+    for row in rows:
+        # Pad row if columns are missing
+        padded_row = list(row)
+        while len(padded_row) < len(header):
+            padded_row.append("")
+        lines.append("| " + " | ".join(padded_row) + " |")
+
+    return join_lines(lines) + "\n"
+END ALGORITHM

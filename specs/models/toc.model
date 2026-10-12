@@ -1,0 +1,73 @@
+# Data Model Specification: Table of Contents & Navigation Models
+# File: specs/models/toc.model
+# Language/Notation: Formal Typed Schema (Pydantic / Typed AST Notation)
+
+"""
+Table of Contents hierarchy, outline bookmarks, heading slugs, and
+cross-referencing models for pdf2md.
+"""
+
+enum TocSource {
+    PDF_BOOKMARK = "pdf_bookmark"    # Sourced from PyMuPDF doc.get_toc()
+    AST_HEADING = "ast_heading"      # Sourced from LLM-parsed HeadingBlock
+    SYNTHESIZED = "synthesized"      # Merged/matched from both sources
+    PRINTED_TOC = "printed_toc"      # Transcribed from printed PDF index pages
+}
+
+struct OutlineNode {
+    level: Integer                   # Hierarchy depth: 1 for Chapter/H1, 2 for Section/H2, etc.
+    title: String                    # Raw bookmark title from PDF outline
+    page_number: Integer             # 1-based target page number
+    dest_y: Optional[Float] = None   # Vertical target destination point on the page
+
+    invariant: level >= 1
+    invariant: page_number >= 1
+    invariant: length(title) > 0
+}
+
+struct ASTHeadingNode {
+    level: Integer                   # 1 through 6
+    content: String                  # Heading text
+    page_number: Integer             # 1-based page number where heading appears
+    slug: String                     # Markdown/HTML anchor slug (e.g. "neural-architectures")
+    block_id: Optional[String] = None # Associated AST block identifier
+
+    invariant: level >= 1 and level <= 6
+    invariant: page_number >= 1
+}
+
+struct TocItem {
+    id: String                       # Unique identifier for the TOC entry
+    level: Integer                   # Tree depth (1 to 6)
+    title: String                    # Display title text
+    target_slug: String              # Markdown anchor href (e.g., "#neural-architectures" or "#page-42")
+    target_page: Integer             # 1-based target page
+    source: TocSource                # PDF_BOOKMARK, AST_HEADING, or SYNTHESIZED
+    children: List[TocItem] = []     # Hierarchical child entries
+
+    invariant: level >= 1
+    invariant: target_page >= 1
+    invariant: length(target_slug) > 0
+}
+
+struct TocTree {
+    items: List[TocItem]             # Top-level root items
+    total_entries: Integer           # Count of all entries across tree
+    has_outline_source: Boolean      # True if PDF outline bookmarks were available
+    has_ast_source: Boolean          # True if AST headings contributed
+
+    invariant: total_entries >= 0
+}
+
+struct SlugMap {
+    slug_to_block_id: Map[String, String] # Slug -> AST Block ID
+    slug_to_page: Map[String, Integer]   # Slug -> 1-based page number
+    allocated_slugs: Set[String]         # Set of unique allocated slugs for collision avoidance
+}
+
+struct PrintedTocLine {
+    raw_text: String                 # "Chapter 1: Foundations ............ 14"
+    section_title: String            # "Chapter 1: Foundations"
+    target_page: Integer             # 14
+    matched_slug: Optional[String]   # Resolved slug link "#chapter-1-foundations"
+}

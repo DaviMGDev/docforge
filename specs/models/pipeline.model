@@ -1,0 +1,126 @@
+# Data Model Specification: Processing Pipeline & Execution Models
+# File: specs/models/pipeline.model
+# Language/Notation: Formal Typed Schema (Pydantic / Typed AST Notation)
+
+"""
+Execution state models, runtime job configurations, page extraction records,
+worker tracking structures, and pipeline metrics for pdf2md.
+"""
+
+enum WorkerStatus {
+    IDLE = "idle"
+    RENDERING = "rendering"
+    EXTRACTING = "extracting"
+    LLM_INFERENCE = "llm_inference"
+    RETRY_BACKOFF = "retry_backoff"
+    COMPLETED = "completed"
+    FAILED = "failed"
+}
+
+enum DocumentClassification {
+    COMPLEX = "complex"             # Requires multimodal vision LLM
+    TRIVIAL_PROSE = "trivial_prose" # Eligible for Stage 2.5 fast-path auto-bypass
+}
+
+struct PageInfo {
+    page_number: Integer             # 1-based global page index
+    width_pts: Float                 # Page width in points (72 DPI)
+    height_pts: Float                # Page height in points
+    rotation: Integer                # Rotation angle (0, 90, 180, 270)
+    has_text: Boolean                # True if selectable native text spans exist
+    image_count: Integer             # Number of embedded raster/vector images
+    drawing_count: Integer           # Number of vector paths/drawings
+}
+
+struct ChunkDefinition {
+    chunk_index: Integer             # 0-based index
+    start_page: Integer              # 1-based start page (inclusive)
+    end_page: Integer                # 1-based end page (inclusive)
+    page_numbers: List[Integer]      # Explicit list of global page numbers in chunk
+    is_contiguous: Boolean           # True if no gaps exist in page_numbers
+
+    invariant: chunk_index >= 0
+    invariant: length(page_numbers) >= 1
+    invariant: length(page_numbers) <= 16 # Bounded chunk size
+}
+
+struct AssetRecord {
+    asset_id: String                 # Unique identifier: "asset_p{page}_{seq}"
+    page_number: Integer             # 1-based source page number
+    xref: Integer                    # PyMuPDF internal XObject cross-reference ID
+    sha256: String                   # SHA-256 digest of binary image bytes
+    extension: String                # Image file extension ("png", "jpg", "webp")
+    width_px: Integer                # Pixel width
+    height_px: Integer               # Pixel height
+    color_space: String              # "RGB", "CMYK", "Gray"
+    file_path: String                # Target destination on disk relative to output directory
+    byte_size: Integer               # Size in bytes
+    is_deduplicated: Boolean = false # True if reused an identical earlier image
+
+    invariant: byte_size > 0
+    invariant: width_px > 0 and height_px > 0
+}
+
+struct PageTextSpan {
+    text: String                     # Raw text segment
+    bbox: Tuple[Float, Float, Float, Float] # (x0, y0, x1, y1)
+    font_name: String                # Font family/name
+    font_size: Float                 # Font size in points
+    flags: Integer                   # Font flags (bit 0: italic, bit 1: serif, bit 4: bold)
+    is_bold: Boolean
+    is_italic: Boolean
+    is_monospace: Boolean
+}
+
+struct PageTextRecord {
+    page_number: Integer             # 1-based source page number
+    full_text: String                # Complete plain text concatenated
+    spans: List[PageTextSpan]        # Granular span data with font metadata
+    word_count: Integer
+    line_count: Integer
+}
+
+struct PageImageRecord {
+    page_number: Integer             # 1-based source page number
+    image_path: String               # Path to rendered page PNG on disk/cache
+    dpi: Integer                     # Render resolution (e.g. 150)
+    width_px: Integer
+    height_px: Integer
+    byte_size: Integer
+}
+
+struct ExtractionResult {
+    chunk_index: Integer
+    page_numbers: List[Integer]
+    rendered_images: List[PageImageRecord] # One high-res PNG per page in chunk
+    raw_texts: List[PageTextRecord]        # Ground-truth text per page in chunk
+    extracted_assets: List[AssetRecord]    # Deduped asset files for this chunk
+    classification: DocumentClassification # COMPLEX or TRIVIAL_PROSE
+}
+
+struct WorkerState {
+    worker_id: Integer               # 1, 2, or 3 (semaphore slots)
+    current_chunk_index: Optional[Integer] = None
+    status: WorkerStatus = WorkerStatus.IDLE
+    current_attempt: Integer = 0
+    last_error: Optional[String] = None
+    started_at: Optional[Float] = None # Unix epoch timestamp
+}
+
+struct PipelineMetrics {
+    pdf_path: String
+    pdf_sha256: String
+    total_source_pages: Integer
+    processed_pages: Integer
+    total_chunks: Integer
+    chunks_cached: Integer           # Reused from cache
+    chunks_bypassed: Integer         # Processed via fast-path bypass
+    chunks_inferred_llm: Integer     # Processed via LLM vision
+    chunks_fallback: Integer         # Switched to deterministic raw-text fallback
+    total_assets_extracted: Integer
+    total_assets_deduplicated: Integer
+    start_time_epoch: Float
+    end_time_epoch: Optional[Float] = None
+    elapsed_seconds: Optional[Float] = None
+    peak_rss_mb: Float = 0.0         # Maximum resident set size in MB
+}

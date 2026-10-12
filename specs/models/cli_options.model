@@ -1,0 +1,78 @@
+# Data Model Specification: CLI Options & Configuration Models
+# File: specs/models/cli_options.model
+# Language/Notation: Formal Typed Schema (Pydantic / Typed AST Notation)
+
+"""
+Command-line options, flag enumerations, validation rules, and runtime
+configuration objects for pdf2md.
+"""
+
+enum OutputFormat {
+    MD = "md"                        # Standard CommonMark/GFM output file
+    JSON = "json"                    # Unified DocumentAST JSON output only
+    BOTH = "both"                    # Emits both .md and .json files
+}
+
+enum PageMarkerMode {
+    ANCHOR = "anchor"                # Invisible HTML anchor: <a id="page-N"></a>\n<!-- [Page N] -->
+    BADGE = "badge"                  # Visible indicator: <small class="pdf-page-indicator">📄 Page N</small>\n---
+    COMMENT = "comment"              # Pure HTML comment: <!-- [Page N] -->
+    NONE = "none"                    # No page markers emitted
+}
+
+enum LogLevel {
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+}
+
+struct RangeSpec {
+    raw_input: String                # e.g., "1-200, 401-500" or "[0:200]"
+    normalized_pages: List[Integer]  # Sorted, unique 1-based integers: [1, 2, ..., 200, 401, ...]
+
+    invariant: length(normalized_pages) > 0
+}
+
+struct ConcurrencyConfig {
+    cpu_workers: Integer             # Bound for rendering & text extraction: min(os.cpu_count(), 4)
+    llm_concurrency: Integer = 3     # Fixed bound for async LLM vision requests: strictly 3
+    sliding_window_size: Integer = 6 # Active chunks kept in disk/memory: llm_concurrency * 2
+
+    invariant: cpu_workers >= 1
+    invariant: llm_concurrency >= 1 and llm_concurrency <= 10
+    invariant: sliding_window_size >= llm_concurrency
+}
+
+struct LlmConfig {
+    model_name: String = "gpt-4o"    # Provider model slug (e.g., "gpt-4o", "claude-3-5-sonnet-20241022")
+    api_key: Optional[String] = None # Sourced from OPENAI_API_KEY / ANTHROPIC_API_KEY
+    api_base: Optional[String] = None # Optional custom endpoint (e.g., for local Ollama / vLLM)
+    temperature: Float = 0.0         # Deterministic temperature
+    max_tokens: Integer = 4096       # Maximum completion tokens per chunk
+    request_timeout_seconds: Float = 120.0 # Timeout per LLM call
+    max_retries: Integer = 3         # Exponential backoff attempts before fallback
+}
+
+struct CliConfig {
+    input_pdf_path: String           # Path to input PDF file
+    output_path: String              # Destination output file (.md or .json)
+    output_format: OutputFormat = OutputFormat.MD # Output artifact choice (md, json, both)
+    assets_dir_path: String          # Directory for extracted image assets
+    cache_dir_path: String           # Directory for cache checkpoints
+    pages_spec: Optional[RangeSpec] = None # None means all pages
+    page_marker_mode: PageMarkerMode = PageMarkerMode.ANCHOR
+    generate_toc: Boolean = true     # Sourced from --toc / --no-toc
+    chunk_size: Integer = 4          # Maximum pages per chunk (default 4)
+    adaptive_chunking: Boolean = true # Dynamically downscale chunk size on dense pages
+    no_stitch: Boolean = false       # Disable heuristic paragraph/table cross-chunk stitching
+    dpi: Integer = 150               # Rendering resolution (default 150)
+    auto_bypass: Boolean = false     # Enable fast-path prose bypass (default false, opt-in)
+    no_cache: Boolean = false        # Force re-execution bypassing cache
+    verbose: Boolean = false         # Enable verbose/debug logs
+    concurrency: ConcurrencyConfig   # Hardware and network concurrency parameters
+    llm: LlmConfig                   # LLM execution settings
+
+    invariant: chunk_size >= 1 and chunk_size <= 16
+    invariant: dpi >= 72 and dpi <= 400
+}

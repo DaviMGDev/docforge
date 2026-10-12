@@ -1,0 +1,173 @@
+# Data Model Specification: Document AST Models
+# File: specs/models/ast.model
+# Language/Notation: Formal Typed Schema (Pydantic / Typed AST Notation)
+
+"""
+Formal representation of Document Abstract Syntax Tree (AST), block hierarchies,
+and intermediate chunk representations for pdf2md.
+"""
+
+enum BlockType {
+    HEADING = "heading"
+    PARAGRAPH = "paragraph"
+    LIST = "list"
+    TABLE = "table"
+    CODE = "code"
+    MATH = "math"
+    IMAGE = "image"
+    CALLOUT = "callout"
+    THEMATIC_BREAK = "thematic_break"
+    RAW_FALLBACK = "raw_fallback"
+}
+
+enum MathMode {
+    INLINE = "inline"        # Delimited by single dollar sign: $...$
+    BLOCK = "block"          # Delimited by double dollar signs: $$...$$
+}
+
+enum CalloutType {
+    NOTE = "NOTE"
+    TIP = "TIP"
+    IMPORTANT = "IMPORTANT"
+    WARNING = "WARNING"
+    CAUTION = "CAUTION"
+}
+
+struct BoundingBox {
+    x0: Float                # Top-left horizontal coordinate (points, 72 dpi)
+    y0: Float                # Top-left vertical coordinate
+    x1: Float                # Bottom-right horizontal coordinate
+    y1: Float                # Bottom-right vertical coordinate
+
+    invariant: x0 <= x1 and y0 <= y1
+    invariant: x0 >= 0 and y0 >= 0
+}
+
+struct BaseBlock {
+    id: Optional[String]     # Unique element slug or anchor identifier (e.g., "sec-intro-1")
+    type: BlockType          # Block discriminator
+    page: Integer            # 1-based source page number where this block originates
+    bbox: Optional[BoundingBox] # Spatial bounding box on the original PDF page (if available)
+    raw_source: Optional[String] # Raw PDF text segment corresponding to this block
+}
+
+struct HeadingBlock extends BaseBlock {
+    type: BlockType = BlockType.HEADING
+    level: Integer           # Heading level (1 to 6)
+    content: String          # Heading text content (clean unformatted or inline markdown)
+    slug: String             # URL-safe anchor slug (e.g., "11-system-overview")
+
+    invariant: level >= 1 and level <= 6
+    invariant: length(content) > 0
+}
+
+struct ParagraphBlock extends BaseBlock {
+    type: BlockType = BlockType.PARAGRAPH
+    content: String          # Paragraph body text with inline markdown (bold, italic, links)
+    is_continuation: Boolean = false # True if this block was stitched from a previous page
+}
+
+struct ListItem {
+    content: String          # Item text or inline formatting
+    sub_items: List[ListItem] = [] # Recursively nested sub-list items
+}
+
+struct ListBlock extends BaseBlock {
+    type: BlockType = BlockType.LIST
+    ordered: Boolean         # True for numbered lists (1, 2, ...), False for bullets
+    start_index: Optional[Integer] = 1 # Starting number if ordered
+    items: List[ListItem]    # Ordered list of items
+
+    invariant: length(items) > 0
+}
+
+struct TableCell {
+    content: String          # Cell text or inline markdown
+    colspan: Integer = 1     # Number of columns spanned (default 1)
+    rowspan: Integer = 1     # Number of rows spanned (default 1)
+    align: Optional[String] = "left" # "left", "center", "right"
+}
+
+struct TableBlock extends BaseBlock {
+    type: BlockType = BlockType.TABLE
+    header: List[String]     # Column headers for standard rectangular tables
+    rows: List[List[String]] # Row cell values
+    complex_cells: Optional[List[List[TableCell]]] = None # Present when cell merges exist
+    caption: Optional[String] = None # Optional table title or caption
+    raw_html: Optional[String] = None # Fallback HTML string for complex colspans/rowspans
+
+    invariant: length(header) > 0 or (complex_cells != None and length(complex_cells) > 0)
+}
+
+struct CodeBlock extends BaseBlock {
+    type: BlockType = BlockType.CODE
+    content: String          # Code source lines
+    language: Optional[String] = "" # Inferred language tag (e.g. "python", "typescript")
+    caption: Optional[String] = None # Optional code listing title (e.g. "Listing 1")
+}
+
+struct MathBlock extends BaseBlock {
+    type: BlockType = BlockType.MATH
+    content: String          # LaTeX mathematical expression (without enclosing $ delimiters)
+    math_mode: MathMode      # Inline or Block
+    equation_number: Optional[String] = None # Equation tag (e.g., "(1.2)")
+}
+
+struct ImageBlock extends BaseBlock {
+    type: BlockType = BlockType.IMAGE
+    asset_path: String       # Relative path to extracted image file (e.g. "assets/asset_p1_01.png")
+    alt_text: String         # Descriptive accessibility text
+    caption: Optional[String] = None # Visual caption printed below the image
+    width_px: Optional[Integer] = None # Image pixel width
+    height_px: Optional[Integer] = None # Image pixel height
+    sha256: Optional[String] = None # SHA-256 digest of image payload
+
+    invariant: length(asset_path) > 0
+}
+
+struct CalloutBlock extends BaseBlock {
+    type: BlockType = BlockType.CALLOUT
+    callout_type: CalloutType # NOTE, TIP, WARNING, IMPORTANT, CAUTION
+    title: Optional[String] = None # Callout title
+    content: String          # Body text of the callout
+}
+
+struct ThematicBreakBlock extends BaseBlock {
+    type: BlockType = BlockType.THEMATIC_BREAK
+    # Represents a horizontal rule (---) separating sections or scenes
+}
+
+struct RawFallbackBlock extends BaseBlock {
+    type: BlockType = BlockType.RAW_FALLBACK
+    content: String          # Verbatim native text extracted when LLM inference failed
+    warning_message: String = "Page rendered via deterministic raw-text fallback"
+}
+
+# Union of all supported block types
+type Block = HeadingBlock | ParagraphBlock | ListBlock | TableBlock | CodeBlock | MathBlock | ImageBlock | CalloutBlock | ThematicBreakBlock | RawFallbackBlock
+
+struct DocumentChunkAST {
+    chunk_index: Integer     # 0-based sequential chunk index
+    page_range: Tuple[Integer, Integer] # [start_page, end_page], 1-based inclusive
+    bypass_used: Boolean = false # True if processed via fast-path bypass
+    fallback_used: Boolean = false # True if raw-text fallback was triggered
+    llm_model: Optional[String] = None # Name of model that generated this chunk
+    blocks: List[Block]      # Ordered sequence of document blocks for this chunk
+    created_at: String       # ISO-8601 UTC timestamp
+
+    invariant: chunk_index >= 0
+    invariant: page_range[0] >= 1 and page_range[1] >= page_range[0]
+}
+
+struct DocumentAST {
+    source_pdf_hash: String  # SHA-256 hash of original PDF file
+    total_pages: Integer     # Total page count of source document
+    selected_pages: List[Integer] # Deduplicated sorted list of 1-based pages processed
+    chunks_count: Integer    # Number of chunks stitched
+    blocks: List[Block]      # Complete unified sequence of document blocks
+    toc_items: List[Any]     # Unified TOC items attached to the document
+    stitched_at: String      # ISO-8601 UTC timestamp
+
+    invariant: length(selected_pages) > 0
+    invariant: chunks_count >= 1
+}

@@ -1,0 +1,95 @@
+# Algorithm Specification: Embedded Asset Extraction & Deduplication
+# File: specs/algorithms/asset_extraction_and_dedup.pseudo
+# Purpose: Extract raw images from PDF streams, deduplicate globally via SHA-256, and organize on disk.
+
+ALGORITHM extract_and_dedupe_assets(
+    doc: FitzDocument,
+    page_number: Integer,
+    assets_dir: String,
+    dedup_table: Map[String, AssetRecord] # Key: SHA-256 hex string
+) -> List[AssetRecord]
+    """
+    Extracts embedded raster and vector images directly from PDF streams on a page.
+    Deduplicates identical assets across pages using SHA-256 hashing.
+    """
+    page = doc.load_page(page_number - 1) # fitz uses 0-based page indexing
+    image_list = page.get_images(full=True)
+    page_asset_records = []
+    seq = 0
+
+    ensure_directory_exists(assets_dir)
+
+    for img_info in image_list:
+        xref = img_info[0] # PyMuPDF XObject cross-reference ID
+        base_image = doc.extract_image(xref)
+
+        if base_image is None:
+            continue
+
+        image_bytes = base_image["image"]
+        image_ext = base_image["ext"] # e.g. "png", "jpeg"
+        width = base_image["width"]
+        height = base_image["height"]
+        colorspace = base_image["colorspace"]
+
+        # Filter out negligible graphical artifacts (icons, bullets, thin lines)
+        if width < 24 or height < 24:
+            continue
+
+        # Handle color-space normalization: Convert CMYK to RGB to ensure web/markdown display
+        if colorspace == "DeviceCMYK" or colorspace == "CMYK":
+            pixmap = fitz.Pixmap(doc, xref)
+            rgb_pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+            image_bytes = rgb_pixmap.tobytes(output="png")
+            image_ext = "png"
+            pixmap = None
+            rgb_pixmap = None
+
+        # Compute deterministic content digest
+        sha256_hash = sha256_hex(image_bytes)
+
+        # Check if asset is already registered in global deduplication table
+        if sha256_hash in dedup_table:
+            existing_record = dedup_table[sha256_hash]
+            # Create a reference record pointing to the already saved asset
+            ref_record = AssetRecord(
+                asset_id = "asset_p" + page_number + "_" + format_two_digits(seq),
+                page_number = page_number,
+                xref = xref,
+                sha256 = sha256_hash,
+                extension = existing_record.extension,
+                width_px = width,
+                height_px = height,
+                color_space = colorspace,
+                file_path = existing_record.file_path,
+                byte_size = len(image_bytes),
+                is_deduplicated = true
+            )
+            page_asset_records.append(ref_record)
+        else:
+            # New unique asset: write to assets_dir
+            filename = "asset_p" + page_number + "_" + format_two_digits(seq) + "." + image_ext
+            disk_path = path_join(assets_dir, filename)
+
+            write_binary_file(disk_path, image_bytes)
+
+            new_record = AssetRecord(
+                asset_id = "asset_p" + page_number + "_" + format_two_digits(seq),
+                page_number = page_number,
+                xref = xref,
+                sha256 = sha256_hash,
+                extension = image_ext,
+                width_px = width,
+                height_px = height,
+                color_space = colorspace,
+                file_path = disk_path,
+                byte_size = len(image_bytes),
+                is_deduplicated = false
+            )
+            dedup_table[sha256_hash] = new_record
+            page_asset_records.append(new_record)
+
+        seq += 1
+
+    return page_asset_records
+END ALGORITHM

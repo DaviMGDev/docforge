@@ -1,0 +1,74 @@
+# Component Contract: Markdown & TOC Renderer Interface
+# File: specs/contracts/renderer.contract
+# Component: Markdown Renderer (CommonMark/GFM generator)
+
+"""
+Formal contract for converting a stitched DocumentAST into clean CommonMark/GFM
+Markdown with page navigation markers and functional Table of Contents links.
+"""
+
+INTERFACE MarkdownRenderer {
+
+    """
+    Renders the complete DocumentAST into Markdown text and writes to target file.
+    """
+    METHOD render_to_markdown(
+        doc_ast: DocumentAST,
+        native_outline: List[OutlineNode],
+        output_file_path: String,
+        marker_mode: PageMarkerMode = PageMarkerMode.ANCHOR,
+        include_toc: Boolean = true
+    ) -> String # Returns final rendered markdown string
+    REQUIRES:
+        - length(doc_ast.blocks) >= 0
+        - dir_exists_or_creatable(parent_dir(output_file_path)) == true
+    ENSURES:
+        - final output is written to output_file_path
+        - file contains valid CommonMark / GFM syntax
+        - if include_toc == true: TOC section precedes document body
+        - page boundary markers match marker_mode specification
+    RAISES:
+        - DiskWriteException: if target file cannot be written
+
+    """
+    Synthesizes a unified Table of Contents by aligning native PDF bookmarks
+    and AST HeadingBlock instances.
+    """
+    METHOD build_table_of_contents(
+        headings: List[HeadingBlock],
+        outline: List[OutlineNode]
+    ) -> List[TocItem]
+    ENSURES:
+        - every TocItem links to an existing heading slug (#slug) OR a valid page anchor (#page-N)
+        - no broken internal anchor links are produced
+
+    """
+    Emits page boundary markers according to the configured mode.
+    """
+    METHOD format_page_marker(
+        page_number: Integer,
+        marker_mode: PageMarkerMode
+    ) -> String
+    ENSURES:
+        - if marker_mode == ANCHOR:
+            returns '<a id="page-{n}"></a>\n<!-- [Page {n}] -->\n\n'
+        - if marker_mode == BADGE:
+            returns '<small class="pdf-page-indicator">📄 Page {n}</small>\n---\n\n'
+        - if marker_mode == COMMENT:
+            returns '<!-- [Page {n}] -->\n\n'
+        - if marker_mode == NONE:
+            returns ''
+
+    """
+    Deterministic slug generator ensuring RFC 3986 safe URLs and collision resolution.
+    """
+    METHOD generate_slug(
+        heading_text: String,
+        allocated_slugs: InOut[Set[String]]
+    ) -> String
+    ENSURES:
+        - result contains only [a-z0-9-_]
+        - result is not present in allocated_slugs prior to insertion
+        - if collision occurs, appends '-1', '-2', etc.
+        - inserts result into allocated_slugs
+}

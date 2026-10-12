@@ -1,0 +1,27 @@
+# Agent internal planning
+.pi/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Caches & Test outputs
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

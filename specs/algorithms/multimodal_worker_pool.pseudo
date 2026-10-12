@@ -1,0 +1,131 @@
+# Algorithm Specification: Bounded Multimodal Worker Pool & Sliding Window
+# File: specs/algorithms/multimodal_worker_pool.pseudo
+# Purpose: Orchestrates async LLM calls with Semaphore(3), sliding window memory bounds, retries, and fallback.
+
+ALGORITHM run_pipeline(
+    pdf_path: String,
+    chunks: List[ChunkDefinition],
+    cli_config: CliConfig
+) -> DocumentAST
+    """
+    Executes the end-to-end extraction pipeline with sliding memory windows,
+    fixed semaphore concurrency (3), and intermediate cache persistence.
+    """
+    semaphore = AsyncSemaphore(cli_config.concurrency.llm_concurrency) # Bound = 3
+    sliding_window_limit = cli_config.concurrency.sliding_window_size # 6 chunks
+
+    cache_dir = get_cache_directory(pdf_path, cli_config)
+    manifest = load_or_init_cache_manifest(pdf_path, cli_config)
+
+    chunk_ast_results = [None] * len(chunks)
+    active_tasks = []
+
+    doc = fitz.open(pdf_path)
+    dedup_table = Map() # SHA-256 -> AssetRecord
+
+    for i in 0..(len(chunks) - 1):
+        chunk = chunks[i]
+
+        # 1. Check disk cache first
+        if not cli_config.no_cache and is_chunk_cached(manifest, chunk.chunk_index):
+            chunk_ast_results[i] = load_chunk_from_cache(cache_dir, chunk.chunk_index)
+            notify_progress_cached(chunk.chunk_index)
+            continue
+
+        # 2. Sliding window flow control: Do not buffer too many active chunks in memory
+        while len(active_tasks) >= sliding_window_limit:
+            completed_index, completed_ast = await_first_completed(active_tasks)
+            chunk_ast_results[completed_index] = completed_ast
+            active_tasks.remove_by_index(completed_index)
+
+        # 3. Deterministic Extraction (CPU-bound)
+        extraction_result = extract_chunk_local(doc, chunk, cli_config.assets_dir_path, dedup_table)
+
+        # 4. Fast-path Auto-Bypass Check
+        if cli_config.auto_bypass and extraction_result.classification == DocumentClassification.TRIVIAL_PROSE:
+            bypassed_ast = synthesize_bypass_ast(chunk, extraction_result.raw_texts)
+            save_chunk_to_cache(cache_dir, bypassed_ast)
+            chunk_ast_results[i] = bypassed_ast
+            # Purge rendered bitmaps immediately
+            cleanup_rendered_bitmaps(extraction_result.rendered_images)
+            notify_progress_bypassed(chunk.chunk_index)
+            continue
+
+        # 5. Spawn async LLM worker task bounded by Semaphore(3)
+        task = spawn_async_task(process_chunk_with_llm(
+            chunk = chunk,
+            extraction = extraction_result,
+            config = cli_config,
+            semaphore = semaphore,
+            cache_dir = cache_dir
+        ))
+        active_tasks.append((i, task))
+
+    # Await remaining in-flight tasks
+    while len(active_tasks) > 0:
+        completed_index, completed_ast = await_first_completed(active_tasks)
+        chunk_ast_results[completed_index] = completed_ast
+        active_tasks.remove_by_index(completed_index)
+
+    # All chunks ready -> Stitch
+    stitched_ast = stitch_chunks(chunk_ast_results, manifest.pdf_sha256, manifest.total_pages)
+    return stitched_ast
+END ALGORITHM
+
+
+ASYNC ALGORITHM process_chunk_with_llm(
+    chunk: ChunkDefinition,
+    extraction: ExtractionResult,
+    config: CliConfig,
+    semaphore: AsyncSemaphore,
+    cache_dir: String
+) -> DocumentChunkAST
+    """
+    Submits chunk to multimodal LLM within Semaphore(3) concurrency limit,
+    with exponential backoff retries and deterministic raw-text fallback.
+    """
+    acquire(semaphore) # Maximum 3 concurrent network requests
+    try:
+        max_retries = config.llm.max_retries # 3 attempts
+        attempt = 0
+        last_error = None
+
+        while attempt < max_retries:
+            attempt += 1
+            try:
+                payload = assemble_llm_payload(extraction)
+                response = await call_litellm_completion(
+                    model = config.llm.model_name,
+                    messages = payload.messages,
+                    response_format = {"type": "json_object"},
+                    timeout = config.llm.request_timeout_seconds
+                )
+                chunk_ast = parse_and_validate_response(response, chunk.chunk_index, chunk.page_numbers)
+
+                # Persist to cache
+                save_chunk_to_cache(cache_dir, chunk_ast)
+                return chunk_ast
+
+            except RateLimitError as e:
+                # HTTP 429
+                last_error = e
+                backoff_time = min(60.0, (2.0 ** attempt) + random_uniform(0.0, 1.0))
+                notify_worker_status(chunk.chunk_index, "RETRY_BACKOFF", backoff_time)
+                await sleep(backoff_time)
+
+            except (NetworkTimeoutError, ServerError, JsonValidationError) as e:
+                last_error = e
+                backoff_time = (1.5 ** attempt) + random_uniform(0.0, 0.5)
+                await sleep(backoff_time)
+
+        # Retries exhausted: Fall back to deterministic raw text AST
+        log_warning("LLM extraction failed for chunk " + chunk.chunk_index + "; triggering fallback: " + str(last_error))
+        fallback_ast = build_raw_fallback_ast(chunk, extraction.raw_texts, str(last_error))
+        save_chunk_to_cache(cache_dir, fallback_ast)
+        return fallback_ast
+
+    finally:
+        # Purge temporary bitmaps from RAM and cache disk to enforce memory safety
+        cleanup_rendered_bitmaps(extraction.rendered_images)
+        release(semaphore)
+END ALGORITHM

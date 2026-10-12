@@ -1,0 +1,71 @@
+# Component Contract: Cross-Chunk AST Stitcher Interface
+# File: specs/contracts/stitcher.contract
+# Component: AST Stitcher (cross-chunk aggregator & reconciler)
+
+"""
+Formal contract for aggregating sequential chunk ASTs, healing cross-boundary
+structural breaks (split paragraphs, severed tables), and normalizing document hierarchy.
+"""
+
+INTERFACE AstStitcher {
+
+    """
+    Combines an ordered list of chunk ASTs into a cohesive single DocumentAST.
+    """
+    METHOD stitch_chunks(
+        chunks: List[DocumentChunkAST],
+        source_pdf_hash: String,
+        total_source_pages: Integer,
+        no_stitch: Boolean = false
+    ) -> DocumentAST
+    REQUIRES:
+        - length(chunks) >= 1
+        - for i in 0..(length(chunks)-2):
+            chunks[i].chunk_index < chunks[i+1].chunk_index
+    ENSURES:
+        - result.chunks_count == length(chunks)
+        - result.source_pdf_hash == source_pdf_hash
+        - if no_stitch == true: blocks are strictly concatenated without merging or chrome pruning
+        - if no_stitch == false: boundary paragraphs/tables are healed and chrome >= 3 pages is pruned
+        - all Block IDs across result.blocks are globally unique
+        - heading levels are structurally monotonic (no illegal depth jumps)
+    RAISES:
+        - ChunkOrderException: if chunks are out of sequence or disjoint when contiguity was expected
+
+    """
+    Evaluates whether two adjacent blocks across a chunk boundary represent a single split paragraph.
+    """
+    METHOD should_merge_paragraphs(
+        trailing_block: Block,
+        leading_block: Block
+    ) -> Boolean
+    ENSURES:
+        - returns true ONLY IF:
+            * trailing_block.type == PARAGRAPH and leading_block.type == PARAGRAPH
+            * trailing_block.content does not end with terminal punctuation ('.', '!', '?', ':"')
+            * leading_block.content starts with a lowercase letter, number, or continuation token
+
+    """
+    Merges two adjacent TableBlocks that were severed across a chunk/page boundary.
+    """
+    METHOD merge_tables(
+        table_a: TableBlock,
+        table_b: TableBlock
+    ) -> TableBlock
+    REQUIRES:
+        - table_a.type == TABLE and table_b.type == TABLE
+        - length(table_a.header) == length(table_b.header) or length(table_b.header) == 0
+    ENSURES:
+        - result.header == table_a.header
+        - length(result.rows) == length(table_a.rows) + length(table_b.rows)
+
+    """
+    Detects and eliminates running headers and footers that repeat across >= 3 pages.
+    """
+    METHOD suppress_running_chrome(
+        blocks: List[Block]
+    ) -> List[Block]
+    ENSURES:
+        - repetitive page numbers, chapter headers, or confidentiality banners in margin blocks
+          are pruned from the output stream
+}

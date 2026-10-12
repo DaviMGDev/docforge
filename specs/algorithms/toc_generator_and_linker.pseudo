@@ -1,0 +1,109 @@
+# Algorithm Specification: Dual-Source TOC Generator & Deep Linker
+# File: specs/algorithms/toc_generator_and_linker.pseudo
+# Purpose: Synthesizes interactive Table of Contents from native PDF bookmarks and AST headings.
+
+ALGORITHM generate_interactive_toc(
+    native_outline: List[OutlineNode],
+    ast_headings: List[HeadingBlock],
+    slug_map: SlugMap
+) -> List[TocItem]
+    """
+    Constructs an interactive TOC linking either to heading slugs (#slug)
+    or fallback page anchors (#page-N).
+    """
+    toc_items = []
+
+    # Case 1: PDF contains native outline bookmarks (highest structural fidelity)
+    if len(native_outline) > 0:
+        for node in native_outline:
+            target_slug = resolve_target_slug(node.title, node.page_number, ast_headings, slug_map)
+
+            toc_items.append(TocItem(
+                id = generate_uuid(),
+                level = node.level,
+                title = node.title,
+                target_slug = target_slug,
+                target_page = node.page_number,
+                source = TocSource.SYNTHESIZED
+            ))
+        return toc_items
+
+    # Case 2: No native outline -> Build TOC purely from AST HeadingBlocks
+    for heading in ast_headings:
+        # Include primary levels 1, 2, 3 in TOC
+        if heading.level <= 3:
+            toc_items.append(TocItem(
+                id = generate_uuid(),
+                level = heading.level,
+                title = heading.content,
+                target_slug = "#" + heading.slug,
+                target_page = heading.page,
+                source = TocSource.AST_HEADING
+            ))
+
+    return toc_items
+END ALGORITHM
+
+
+ALGORITHM resolve_target_slug(
+    bookmark_title: String,
+    target_page: Integer,
+    ast_headings: List[HeadingBlock],
+    slug_map: SlugMap
+) -> String
+    """
+    Finds the exact or closest heading slug matching bookmark title on the target page.
+    Falls back to #page-N if no heading matches.
+    """
+    norm_title = normalize_for_matching(bookmark_title)
+
+    # 1. Exact or high-similarity match on the exact target page (or +/- 1 page tolerance)
+    candidate_headings = [h for h in ast_headings if abs(h.page - target_page) <= 1]
+
+    best_match = None
+    highest_similarity = 0.0
+
+    for h in candidate_headings:
+        norm_h = normalize_for_matching(h.content)
+        sim = string_similarity(norm_title, norm_h)
+        if sim > 0.8 and sim > highest_similarity:
+            highest_similarity = sim
+            best_match = h
+
+    if best_match is not None:
+        return "#" + best_match.slug
+
+    # 2. Global search across all headings if not found on page
+    for h in ast_headings:
+        norm_h = normalize_for_matching(h.content)
+        if norm_h == norm_title:
+            return "#" + h.slug
+
+    # 3. Fallback: Link directly to the page anchor
+    return "#page-" + target_page
+END ALGORITHM
+
+
+ALGORITHM transcribe_printed_toc(
+    toc_text: String,
+    slug_map: SlugMap
+) -> String
+    """
+    Transforms printed TOC dotted leader lines into active markdown links.
+    e.g. "Chapter 1: Foundations ............ 14" -> "- [Chapter 1: Foundations](#chapter-1-foundations) *(p. 14)*"
+    """
+    lines = toc_text.split("\n")
+    transformed_lines = []
+
+    for line in lines:
+        match = regex_match(r"^(.*?)\s*[\.·\-_]{3,}\s*(\d+)\s*$", line)
+        if match:
+            title = match.group(1).strip()
+            page_num = parse_int(match.group(2).strip())
+            resolved_slug = resolve_target_slug(title, page_num, [], slug_map)
+            transformed_lines.append("- [" + title + "](" + resolved_slug + ") *(p. " + page_num + ")*")
+        else:
+            transformed_lines.append(line)
+
+    return join_lines(transformed_lines)
+END ALGORITHM

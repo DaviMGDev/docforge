@@ -1,0 +1,70 @@
+# Component Contract: Multimodal LLM Vision Parser Interface
+# File: specs/contracts/llm_provider.contract
+# Component: LLM Parser (litellm adapter & prompt runner)
+
+"""
+Formal contract for bounded asynchronous multimodal LLM interactions,
+structured JSON output validation, concurrency management, and fallback execution.
+"""
+
+INTERFACE MultimodalLlmParser {
+
+    """
+    Submits a document chunk (images + raw text + asset manifest) to the LLM
+    under strict concurrency bounding (Semaphore = 3) and exponential backoff retry.
+    """
+    ASYNC METHOD parse_chunk(
+        chunk_index: Integer,
+        page_numbers: List[Integer],
+        page_images: List[PageImageRecord],
+        raw_texts: List[PageTextRecord],
+        available_assets: List[AssetRecord],
+        config: LlmConfig,
+        semaphore: AsyncSemaphore # Must be initialized with capacity = 3
+    ) -> DocumentChunkAST
+    REQUIRES:
+        - length(page_numbers) == length(page_images) == length(raw_texts)
+        - 1 <= length(page_numbers) <= 16
+        - semaphore.capacity <= 3
+        - config.model_name in SupportedModels
+    ENSURES:
+        - result.chunk_index == chunk_index
+        - result.page_range == (min(page_numbers), max(page_numbers))
+        - length(result.blocks) >= 0
+        - all Block instances conform to DocumentChunkAST JSON Schema
+        - if LLM repeatedly fails after config.max_retries (3 attempts):
+            * result.fallback_used == true
+            * result.blocks contain RawFallbackBlock populated from raw_texts
+            * method NEVER raises uncaught network/rate-limit exception to pipeline
+    RAISES:
+        - ConfigurationException: if API key is missing and unresolvable from environment
+
+    """
+    Builds the multimodal payload conforming to provider expectations (OpenAI/Anthropic/Gemini).
+    """
+    METHOD assemble_prompt_payload(
+        page_numbers: List[Integer],
+        page_images: List[PageImageRecord],
+        raw_texts: List[PageTextRecord],
+        available_assets: List[AssetRecord]
+    ) -> LlmRequestPayload
+    ENSURES:
+        - payload.system_message contains JSON Schema and formatting instructions
+        - payload.messages contain sequential base64 image parts paired with raw text spans
+        - payload.response_format specifies type: "json_object" or json_schema structured output
+
+    """
+    Validates and repairs raw LLM string response into a typed DocumentChunkAST.
+    """
+    METHOD parse_and_validate_response(
+        raw_llm_response: String,
+        chunk_index: Integer,
+        page_numbers: List[Integer]
+    ) -> DocumentChunkAST
+    ENSURES:
+        - parses JSON, applying json_repair if minor syntax errors (e.g. trailing commas) exist
+        - validates all blocks against Pydantic schema
+        - assigns deterministic block IDs if missing from LLM response
+    RAISES:
+        - SchemaValidationException: if payload fails schema after repair
+}

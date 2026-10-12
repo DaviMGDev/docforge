@@ -127,10 +127,10 @@ def emit_markdown(
 
     # 1. Interactive Table of Contents
     if include_toc and toc_items:
-        parts.append("## Table of Contents\n")
+        parts.append("## Table of Contents\n\n")
         for item in toc_items:
             indent = "  " * (item.level - 1)
-            parts.append(f"{indent}- [{item.title}]({item.target_slug}) *(p. {item.target_page})*")
+            parts.append(f"{indent}- [{item.title}]({item.target_slug}) *(p. {item.target_page})*\n")
         parts.append("\n---\n\n")
 
     # 2. Blocks with page markers

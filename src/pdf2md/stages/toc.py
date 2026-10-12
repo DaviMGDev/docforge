@@ -88,8 +88,13 @@ def generate_interactive_toc(
         return toc_items
 
     # Case 2: Build TOC purely from AST headings
+    seen_titles_at_level: set[tuple[int, str]] = set()
     for heading in ast_headings:
         if heading.level <= 3:
+            key = (heading.level, heading.content.strip().lower())
+            if key in seen_titles_at_level:
+                continue
+            seen_titles_at_level.add(key)
             toc_items.append(
                 TocItem(
                     id=str(uuid.uuid4()),

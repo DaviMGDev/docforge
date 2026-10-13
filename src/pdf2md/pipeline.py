@@ -10,6 +10,7 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 import pymupdf as fitz
 
@@ -21,6 +22,7 @@ from pdf2md.exceptions import (
     LlmTruncationException,
     MissingApiKeyException,
 )
+from pdf2md.exporters import ExportOptions, get_exporter
 from pdf2md.logging import get_logger
 from pdf2md.models.ast import DocumentAST, DocumentChunkAST, HeadingBlock
 from pdf2md.models.cli_options import CliConfig, OutputFormat
@@ -46,6 +48,7 @@ from pdf2md.stages.partition import (
     parse_page_selection,
     partition_into_chunks,
 )
+from pdf2md.stages.partition_export import generate_partition_index, partition_ast
 from pdf2md.stages.stitcher import stitch_chunks
 from pdf2md.stages.synthesis import emit_markdown, write_output_document
 from pdf2md.stages.toc import generate_interactive_toc
@@ -266,35 +269,82 @@ class PipelineRunner:
             no_stitch=self.config.no_stitch,
         )
 
-        # Step 5: Table of Contents & Markdown Synthesis
+        # Step 5: Table of Contents & Exporter Dispatch
         headings = [b for b in stitched_ast.blocks if isinstance(b, HeadingBlock)]
         toc_items = generate_interactive_toc(native_outline, headings)
         stitched_ast.toc_items = toc_items
 
+        export_opts = ExportOptions(
+            page_marker_mode=self.config.page_marker_mode,
+            generate_toc=self.config.generate_toc,
+            standalone=self.config.standalone,
+            embed_assets=self.config.embed_assets,
+            assets_dir=Path(self.config.assets_dir_path),
+        )
+
+        active_formats = list(self.config.output_formats or [])
+        if self.config.output_format == OutputFormat.BOTH and "json" not in active_formats:
+            active_formats.append("json")
+        if not active_formats:
+            active_formats = ["md"]
+
         output_md_path: Optional[str] = None
         output_json_path: Optional[str] = None
+        self.generated_files: List[str] = []
 
-        base_out = self.config.output_path
-        if base_out.endswith(".md"):
-            stem = base_out[:-3]
-        elif base_out.endswith(".json"):
-            stem = base_out[:-5]
-        else:
-            stem = base_out
+        if self.config.split_by:
+            base_out = Path(self.config.output_path)
+            out_dir = base_out.with_suffix("") if base_out.suffix else base_out
+            out_dir.mkdir(parents=True, exist_ok=True)
 
-        if self.config.output_format in (OutputFormat.MD, OutputFormat.BOTH):
-            output_md_path = f"{stem}.md" if not base_out.endswith(".md") else base_out
-            md_content = emit_markdown(
-                doc_ast=stitched_ast,
-                toc_items=toc_items,
-                marker_mode=self.config.page_marker_mode,
-                include_toc=self.config.generate_toc,
+            partitions = partition_ast(
+                stitched_ast,
+                split_by=self.config.split_by,
+                pattern=self.config.split_pattern,
             )
-            write_output_document(md_content, output_md_path)
 
-        if self.config.output_format in (OutputFormat.JSON, OutputFormat.BOTH):
-            output_json_path = f"{stem}.json" if not base_out.endswith(".json") else base_out
-            write_output_document(stitched_ast.model_dump_json(indent=2), output_json_path)
+            for fmt in active_formats:
+                exporter = get_exporter(fmt)
+                for rel_path, sub_ast in partitions:
+                    target_file = out_dir / rel_path.with_suffix(exporter.file_extension)
+                    exporter.export(sub_ast, target_file, export_opts)
+                    self.generated_files.append(str(target_file))
+
+                # Generate index for navigable collections
+                index_text = generate_partition_index(partitions, exporter.file_extension)
+                index_file = out_dir / f"index{exporter.file_extension}"
+                index_file.write_text(index_text, encoding="utf-8")
+                self.generated_files.append(str(index_file))
+
+                if exporter.file_extension == ".md":
+                    summary_file = out_dir / "SUMMARY.md"
+                    summary_file.write_text(index_text, encoding="utf-8")
+                    self.generated_files.append(str(summary_file))
+                    output_md_path = str(index_file)
+                elif exporter.file_extension == ".json":
+                    output_json_path = str(index_file)
+        else:
+            base_out = self.config.output_path
+            stem = base_out
+            for ext in (".md", ".json", ".html", ".typ"):
+                if stem.endswith(ext):
+                    stem = stem[: -len(ext)]
+                    break
+
+            for fmt in active_formats:
+                exporter = get_exporter(fmt)
+                if len(active_formats) == 1 and Path(base_out).suffix:
+                    target_path = Path(base_out)
+                else:
+                    target_path = Path(f"{stem}{exporter.file_extension}")
+
+                exporter.export(stitched_ast, target_path, export_opts)
+                self.generated_files.append(str(target_path))
+
+                if exporter.file_extension == ".md":
+                    output_md_path = str(target_path)
+                elif exporter.file_extension == ".json":
+                    output_json_path = str(target_path)
 
         doc.close()
         return stitched_ast, output_md_path, output_json_path

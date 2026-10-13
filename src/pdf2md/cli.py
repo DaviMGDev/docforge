@@ -34,6 +34,7 @@ from pdf2md.models.cli_options import (
     OutputFormat,
     PageMarkerMode,
     RangeSpec,
+    parse_output_formats,
 )
 from pdf2md.pipeline import PipelineRunner
 from pdf2md.stages.extract import open_pdf_document
@@ -52,7 +53,33 @@ err_console = Console(stderr=True)
 def convert(
     input_pdf: str = typer.Argument(..., help="Path to input PDF file"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="Destination output file path"),
-    format: str = typer.Option("md", "-f", "--format", help="Output format: md, json, both"),
+    format: str = typer.Option(
+        "md",
+        "-f",
+        "--format",
+        help="Output format(s): md, json, html, typ, both, all (or comma-separated e.g. md,json)",
+    ),
+    standalone: bool = typer.Option(
+        True,
+        "--standalone/--no-standalone",
+        help="Emit standalone document with styles/scripts (for HTML/Typst)",
+    ),
+    embed_assets: bool = typer.Option(
+        False,
+        "--embed-assets",
+        "--single-file",
+        help="Inline assets/images into output document as base64 data URLs",
+    ),
+    split_by: Optional[str] = typer.Option(
+        None,
+        "--split-by",
+        help="Partition output files by boundary: page, chapter, section, chapter/page",
+    ),
+    split_pattern: Optional[str] = typer.Option(
+        None,
+        "--split-pattern",
+        help="Custom output filename template for partitioned files",
+    ),
     pages: Optional[str] = typer.Option(None, "-p", "--pages", help="Page range specification e.g. '1-10' or '[0:10]'"),
     page_markers: str = typer.Option("anchor", "-m", "--page-markers", help="Page marker style: anchor, badge, comment, none"),
     toc: bool = typer.Option(True, "--toc/--no-toc", help="Generate Table of Contents"),
@@ -121,11 +148,19 @@ def convert(
 
     # Determine default output path
     stem = os.path.splitext(os.path.basename(input_pdf))[0]
-    out_format = OutputFormat(format.lower())
+    parsed_formats = parse_output_formats(format)
+    try:
+        out_format = OutputFormat(format.lower())
+    except ValueError:
+        out_format = OutputFormat.MD
 
     if output is None:
-        if out_format == OutputFormat.JSON:
+        if len(parsed_formats) == 1 and parsed_formats[0] == "json":
             dest_output = f"{stem}.json"
+        elif len(parsed_formats) == 1 and parsed_formats[0] == "html":
+            dest_output = f"{stem}.html"
+        elif len(parsed_formats) == 1 and parsed_formats[0] in ("typ", "typst"):
+            dest_output = f"{stem}.typ"
         else:
             dest_output = f"{stem}.md"
     else:
@@ -165,6 +200,11 @@ def convert(
         input_pdf_path=input_pdf,
         output_path=dest_output,
         output_format=out_format,
+        output_formats=parsed_formats,
+        standalone=standalone,
+        embed_assets=embed_assets,
+        split_by=split_by,
+        split_pattern=split_pattern,
         assets_dir_path=assets_dir,
         cache_dir_path=os.environ.get("PDF2MD_CACHE_DIR", cache_dir),
         pages_spec=range_spec,

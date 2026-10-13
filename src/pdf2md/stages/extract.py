@@ -238,12 +238,15 @@ def extract_and_dedupe_assets(
         if width < 24 or height < 24:
             continue
 
-        # Handle color-space normalization: Convert CMYK to RGB
-        if colorspace in ("DeviceCMYK", "CMYK"):
+        # Handle format / color-space normalization: Convert CMYK or JPX/JBIG2 to standard PNG
+        if colorspace in ("DeviceCMYK", "CMYK") or image_ext in ("jpx", "jp2", "j2k", "jpc", "jb2", "pam"):
             try:
                 pixmap = fitz.Pixmap(doc, xref)
-                rgb_pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
-                image_bytes = rgb_pixmap.tobytes(output="png")
+                if pixmap.colorspace and pixmap.colorspace.n >= 4:
+                    rgb_pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+                    image_bytes = rgb_pixmap.tobytes(output="png")
+                else:
+                    image_bytes = pixmap.tobytes(output="png")
                 image_ext = "png"
                 colorspace = "RGB"
                 pixmap = None

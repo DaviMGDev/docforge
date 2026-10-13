@@ -12,6 +12,36 @@ class OutputFormat(str, Enum):
     MD = "md"
     JSON = "json"
     BOTH = "both"
+    HTML = "html"
+    TYP = "typ"
+    TYPST = "typst"
+    ALL = "all"
+
+
+class SplitStrategy(str, Enum):
+    NONE = "none"
+    PAGE = "page"
+    CHAPTER = "chapter"
+    SECTION = "section"
+    CHAPTER_PAGE = "chapter/page"
+
+
+def parse_output_formats(format_str: str) -> List[str]:
+    """Parse format option string into list of normalized format identifiers."""
+    cleaned = format_str.strip().lower()
+    if cleaned == "both":
+        return ["md", "json"]
+    if cleaned == "all":
+        return ["md", "json", "html", "typ"]
+
+    parts = [p.strip() for p in cleaned.split(",") if p.strip()]
+    normalized: List[str] = []
+    for p in parts:
+        if p == "typst":
+            p = "typ"
+        if p not in normalized:
+            normalized.append(p)
+    return normalized or ["md"]
 
 
 class PageMarkerMode(str, Enum):
@@ -60,6 +90,11 @@ class CliConfig(BaseModel):
     input_pdf_path: str
     output_path: str
     output_format: OutputFormat = OutputFormat.MD
+    output_formats: List[str] = Field(default_factory=lambda: ["md"])
+    standalone: bool = True
+    embed_assets: bool = False
+    split_by: Optional[str] = None
+    split_pattern: Optional[str] = None
     assets_dir_path: str = "assets"
     cache_dir_path: str = ".cache"
     pages_spec: Optional[RangeSpec] = None
@@ -75,3 +110,19 @@ class CliConfig(BaseModel):
     log_level: Optional[LogLevel] = None
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+
+    @model_validator(mode="after")
+    def sync_formats(self) -> CliConfig:
+        if not self.output_formats or self.output_formats == ["md"]:
+            if self.output_format == OutputFormat.BOTH:
+                self.output_formats = ["md", "json"]
+            elif self.output_format == OutputFormat.JSON:
+                self.output_formats = ["json"]
+            elif self.output_format in (OutputFormat.HTML, OutputFormat.TYP, OutputFormat.TYPST):
+                fmt = "typ" if self.output_format in (OutputFormat.TYP, OutputFormat.TYPST) else self.output_format.value
+                self.output_formats = [fmt]
+            elif self.output_format == OutputFormat.ALL:
+                self.output_formats = ["md", "json", "html", "typ"]
+            elif self.output_format == OutputFormat.MD:
+                self.output_formats = ["md"]
+        return self

@@ -10,7 +10,7 @@ import re
 from typing import List, Tuple
 import pymupdf as fitz
 
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     Block,
     DocumentChunkAST,
     HeadingBlock,
@@ -18,7 +18,7 @@ from pdf2md.models.ast import (
     ListItem,
     ParagraphBlock,
 )
-from pdf2md.models.pipeline import ChunkDefinition, DocumentClassification
+from docforge.models.pipeline import ChunkDefinition, DocumentClassification
 
 
 MATH_SYMBOLS = ["∑", "∫", "∂", "√", "±", "≤", "≥", "≠", "≈", "∈", "∀", "∃", "∞", "×", "÷"]

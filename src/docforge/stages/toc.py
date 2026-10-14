@@ -9,8 +9,8 @@ import difflib
 import re
 import uuid
 from typing import Dict, List, Optional, Set
-from pdf2md.models.ast import HeadingBlock
-from pdf2md.models.toc import OutlineNode, SlugMap, TocItem, TocSource
+from docforge.models.ast import HeadingBlock
+from docforge.models.toc import OutlineNode, SlugMap, TocItem, TocSource
 
 
 def normalize_for_matching(text: str) -> str:

@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 import signal
 import sys
 from typing import Optional
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 import typer
 from rich.console import Console
 
@@ -18,15 +19,17 @@ load_dotenv()
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
-from pdf2md.exceptions import (
+from docforge.config import load_user_settings, resolve_value_precedence
+
+from docforge.exceptions import (
     CorruptedPdfException,
     InvalidPageRangeException,
     LlmInferenceException,
     MissingApiKeyException,
     Pdf2MdException,
 )
-from pdf2md.logging import get_logger, setup_logging
-from pdf2md.models.cli_options import (
+from docforge.logging import get_logger, setup_logging
+from docforge.models.cli_options import (
     CliConfig,
     ConcurrencyConfig,
     LlmConfig,
@@ -36,12 +39,12 @@ from pdf2md.models.cli_options import (
     RangeSpec,
     parse_output_formats,
 )
-from pdf2md.pipeline import PipelineRunner
-from pdf2md.stages.extract import open_pdf_document
-from pdf2md.stages.partition import parse_page_selection
+from docforge.pipeline import PipelineRunner
+from docforge.stages.extract import open_pdf_document
+from docforge.stages.partition import parse_page_selection
 
 app = typer.Typer(
-    name="pdf2md",
+    name="docforge",
     help="High-fidelity Multimodal PDF-to-Markdown Converter",
     add_completion=False,
 )
@@ -100,6 +103,17 @@ def convert(
         None,
         "--timeout",
         help="LLM request timeout in seconds (default 120.0)",
+    ),
+    instructions: Optional[str] = typer.Option(
+        None,
+        "--instructions",
+        "--prompt",
+        help="Custom transcription guidelines/prompt appended to vision LLM system prompt",
+    ),
+    prompt_file: Optional[str] = typer.Option(
+        None,
+        "--prompt-file",
+        help="Path to a text/markdown file containing custom transcription guidelines",
     ),
     dpi: int = typer.Option(150, "--dpi", help="Page rendering resolution DPI (default 150)"),
     cache_dir: str = typer.Option(".cache", "--cache-dir", help="Directory for cache checkpoints"),
@@ -168,25 +182,130 @@ def convert(
 
     range_spec = RangeSpec(raw_input=pages, normalized_pages=[]) if pages else None
 
-    selected_model = model or os.environ.get("PDF2MD_MODEL", "gemma4:cloud")
-    api_base = os.environ.get("PDF2MD_API_BASE") or os.environ.get("OLLAMA_API_BASE")
-    api_key = os.environ.get("PDF2MD_API_KEY") or os.environ.get("OLLAMA_API_KEY")
-    resolved_max_tokens = max_tokens if max_tokens is not None else int(os.environ.get("PDF2MD_MAX_TOKENS", "8192"))
+    # Load 5-tier configuration sources
+    user_settings = load_user_settings()
+    local_dotenv = dotenv_values(".env") if os.path.exists(".env") else {}
 
-    resolved_context_window = context_window
-    if resolved_context_window is None:
-        if "PDF2MD_CONTEXT_WINDOW" in os.environ:
-            resolved_context_window = int(os.environ["PDF2MD_CONTEXT_WINDOW"])
-        elif "PDF2MD_NUM_CTX" in os.environ:
-            resolved_context_window = int(os.environ["PDF2MD_NUM_CTX"])
+    selected_model = resolve_value_precedence(
+        cli_value=model,
+        env_keys=["DOCFORGE_MODEL", "PDF2MD_MODEL"],
+        settings_value=user_settings.llm.model_name,
+        default_value="gemma4:cloud",
+        dotenv_dict=local_dotenv,
+    )
+    api_base = resolve_value_precedence(
+        cli_value=None,
+        env_keys=["DOCFORGE_API_BASE", "PDF2MD_API_BASE", "OLLAMA_API_BASE"],
+        settings_value=user_settings.llm.api_base,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+    api_key = resolve_value_precedence(
+        cli_value=None,
+        env_keys=["DOCFORGE_API_KEY", "PDF2MD_API_KEY", "OLLAMA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"],
+        settings_value=user_settings.llm.api_key,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+    max_tokens_val = resolve_value_precedence(
+        cli_value=max_tokens,
+        env_keys=["DOCFORGE_MAX_TOKENS", "PDF2MD_MAX_TOKENS"],
+        settings_value=user_settings.llm.max_tokens,
+        default_value=8192,
+        dotenv_dict=local_dotenv,
+    )
+    resolved_max_tokens = int(max_tokens_val)
 
-    resolved_timeout = timeout
-    if resolved_timeout is None:
-        if "PDF2MD_TIMEOUT" in os.environ:
-            resolved_timeout = float(os.environ["PDF2MD_TIMEOUT"])
+    context_window_val = resolve_value_precedence(
+        cli_value=context_window,
+        env_keys=["DOCFORGE_CONTEXT_WINDOW", "PDF2MD_CONTEXT_WINDOW", "DOCFORGE_NUM_CTX", "PDF2MD_NUM_CTX"],
+        settings_value=user_settings.llm.context_window,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+    resolved_context_window = int(context_window_val) if context_window_val is not None else None
+
+    timeout_val = resolve_value_precedence(
+        cli_value=timeout,
+        env_keys=["DOCFORGE_TIMEOUT", "PDF2MD_TIMEOUT"],
+        settings_value=user_settings.llm.timeout_seconds,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+    if timeout_val is not None:
+        resolved_timeout = float(timeout_val)
+    else:
+        resolved_timeout = max(120.0, (resolved_max_tokens / 8192.0) * 120.0)
+
+    resolved_instructions = resolve_value_precedence(
+        cli_value=instructions,
+        env_keys=["DOCFORGE_INSTRUCTIONS", "PDF2MD_INSTRUCTIONS"],
+        settings_value=user_settings.defaults.instructions,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+
+    resolved_prompt_file = resolve_value_precedence(
+        cli_value=prompt_file,
+        env_keys=["DOCFORGE_PROMPT_FILE", "PDF2MD_PROMPT_FILE"],
+        settings_value=user_settings.defaults.prompt_file,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+
+    if resolved_prompt_file:
+        prompt_path = Path(resolved_prompt_file)
+        if not prompt_path.is_file():
+            # If specified via explicit CLI or env, fail; if from settings.json and missing, only fail if not optional
+            if prompt_file or any(k in os.environ for k in ["DOCFORGE_PROMPT_FILE", "PDF2MD_PROMPT_FILE"]):
+                err_console.print(f"[red]Error: Prompt file not found: {resolved_prompt_file}[/red]")
+                sys.exit(2)
         else:
-            # Scale dynamically with max_tokens budget (minimum 120s for <= 8192 tokens)
-            resolved_timeout = max(120.0, (resolved_max_tokens / 8192.0) * 120.0)
+            try:
+                file_content = prompt_path.read_text(encoding="utf-8").strip()
+                if file_content:
+                    if resolved_instructions:
+                        resolved_instructions = f"{resolved_instructions}\n\n{file_content}"
+                    else:
+                        resolved_instructions = file_content
+            except Exception as e:
+                err_console.print(f"[red]Error reading prompt file {resolved_prompt_file}: {e}[/red]")
+                sys.exit(2)
+
+    resolved_cache_dir = os.path.expanduser(
+        resolve_value_precedence(
+            cli_value=None if cache_dir == ".cache" else cache_dir,
+            env_keys=["DOCFORGE_CACHE_DIR", "PDF2MD_CACHE_DIR"],
+            settings_value=user_settings.defaults.cache_dir,
+            default_value=cache_dir,
+            dotenv_dict=local_dotenv,
+        )
+    )
+    resolved_dpi = int(
+        resolve_value_precedence(
+            cli_value=None if dpi == 150 else dpi,
+            env_keys=["DOCFORGE_DPI", "PDF2MD_DPI"],
+            settings_value=user_settings.defaults.dpi,
+            default_value=dpi,
+            dotenv_dict=local_dotenv,
+        )
+    )
+    resolved_page_markers = resolve_value_precedence(
+        cli_value=None if page_markers == "anchor" else page_markers,
+        env_keys=["DOCFORGE_PAGE_MARKERS", "PDF2MD_PAGE_MARKERS"],
+        settings_value=user_settings.defaults.page_markers,
+        default_value=page_markers,
+        dotenv_dict=local_dotenv,
+    )
+    resolved_chunk_size = int(
+        resolve_value_precedence(
+            cli_value=None if chunk_size == 4 else chunk_size,
+            env_keys=["DOCFORGE_CHUNK_SIZE", "PDF2MD_CHUNK_SIZE"],
+            settings_value=user_settings.defaults.chunk_size,
+            default_value=chunk_size,
+            dotenv_dict=local_dotenv,
+        )
+    )
 
     parsed_log_level = None
     if log_level:
@@ -206,19 +325,21 @@ def convert(
         split_by=split_by,
         split_pattern=split_pattern,
         assets_dir_path=assets_dir,
-        cache_dir_path=os.environ.get("PDF2MD_CACHE_DIR", cache_dir),
+        cache_dir_path=resolved_cache_dir,
         pages_spec=range_spec,
-        page_marker_mode=PageMarkerMode(page_markers.lower()),
+        page_marker_mode=PageMarkerMode(resolved_page_markers.lower()),
         generate_toc=toc,
-        chunk_size=chunk_size,
+        chunk_size=resolved_chunk_size,
         adaptive_chunking=adaptive_chunking,
         no_stitch=no_stitch,
-        dpi=int(os.environ.get("PDF2MD_DPI", dpi)),
+        dpi=resolved_dpi,
         auto_bypass=auto_bypass,
         no_cache=no_cache,
         verbose=bool(verbose or debug),
         log_level=parsed_log_level,
         concurrency=ConcurrencyConfig(llm_concurrency=llm_concurrency),
+        instructions=resolved_instructions,
+        prompt_file=resolved_prompt_file,
         llm=LlmConfig(
             model_name=selected_model,
             api_base=api_base,
@@ -226,6 +347,8 @@ def convert(
             max_tokens=resolved_max_tokens,
             context_window=resolved_context_window,
             request_timeout_seconds=resolved_timeout,
+            instructions=resolved_instructions,
+            prompt_file=resolved_prompt_file,
         ),
     )
 

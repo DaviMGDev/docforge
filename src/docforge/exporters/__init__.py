@@ -1,6 +1,6 @@
 """pdf2md exporters package: modular multi-format export architecture."""
 
-from pdf2md.exporters.base import (
+from docforge.exporters.base import (
     BaseExporter,
     ExportOptions,
     ExporterRegistry,
@@ -9,10 +9,10 @@ from pdf2md.exporters.base import (
     register_exporter,
     registry,
 )
-from pdf2md.exporters.markdown import MarkdownExporter
-from pdf2md.exporters.json_exporter import JsonExporter
-from pdf2md.exporters.html import HtmlExporter
-from pdf2md.exporters.typst import TypstExporter
+from docforge.exporters.markdown import MarkdownExporter
+from docforge.exporters.json_exporter import JsonExporter
+from docforge.exporters.html import HtmlExporter
+from docforge.exporters.typst import TypstExporter
 
 # Register typst alias
 registry.register(registry.get("typ"))

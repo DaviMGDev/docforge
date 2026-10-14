@@ -18,9 +18,9 @@ from typing import Any, Callable, Dict, List, Optional
 import litellm
 litellm.telemetry = False
 
-from pdf2md.exceptions import LlmInferenceException, LlmTruncationException, MissingApiKeyException
-from pdf2md.logging import get_logger
-from pdf2md.models.ast import (
+from docforge.exceptions import LlmInferenceException, LlmTruncationException, MissingApiKeyException
+from docforge.logging import get_logger
+from docforge.models.ast import (
     Block,
     CalloutBlock,
     CalloutType,
@@ -37,8 +37,8 @@ from pdf2md.models.ast import (
     TableBlock,
     ThematicBreakBlock,
 )
-from pdf2md.models.cli_options import LlmConfig
-from pdf2md.models.pipeline import AssetRecord, PageImageRecord, PageTextRecord
+from docforge.models.cli_options import LlmConfig
+from docforge.models.pipeline import AssetRecord, PageImageRecord, PageTextRecord
 
 logger = get_logger("llm_worker")
 
@@ -83,9 +83,9 @@ def validate_api_key_for_model(config: LlmConfig) -> None:
             raise MissingApiKeyException(f"Error: GEMINI_API_KEY is required for model '{config.model_name}'")
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(custom_instructions: Optional[str] = None) -> str:
     """Construct system prompt enforcing structured JSON and CommonMark rules."""
-    return """You are a high-fidelity document structure parser.
+    base_prompt = """You are a high-fidelity document structure parser.
 Analyze the provided PDF page images and native ground truth text.
 Output a single JSON object conforming to this schema:
 {
@@ -117,6 +117,9 @@ IMPORTANT:
 4. Images must reference matching paths from the provided asset manifest.
 5. Return ONLY raw JSON without markdown code fences.
 """
+    if custom_instructions and custom_instructions.strip():
+        return f"{base_prompt}\n\nADDITIONAL USER TRANSCRIPTION INSTRUCTIONS:\n{custom_instructions.strip()}\n"
+    return base_prompt
 
 
 def assemble_prompt_payload(
@@ -124,9 +127,10 @@ def assemble_prompt_payload(
     page_images: List[PageImageRecord],
     raw_texts: List[PageTextRecord],
     available_assets: List[AssetRecord],
+    custom_instructions: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Assemble multimodal messages list containing images and ground-truth text."""
-    system_prompt = build_system_prompt()
+    system_prompt = build_system_prompt(custom_instructions=custom_instructions)
 
     user_content: List[Dict[str, Any]] = []
 
@@ -439,7 +443,13 @@ async def process_chunk_with_llm(
         if status_callback:
             status_callback(chunk_index, "LLM_INFERENCE")
 
-        messages = assemble_prompt_payload(page_numbers, page_images, raw_texts, available_assets)
+        messages = assemble_prompt_payload(
+            page_numbers,
+            page_images,
+            raw_texts,
+            available_assets,
+            custom_instructions=getattr(config, "instructions", None),
+        )
 
         attempt = 0
         last_error = ""

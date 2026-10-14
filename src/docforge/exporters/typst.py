@@ -6,9 +6,9 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
-from pdf2md.exceptions import DiskWriteException
-from pdf2md.exporters.base import BaseExporter, ExportOptions, register_exporter
-from pdf2md.models.ast import (
+from docforge.exceptions import DiskWriteException
+from docforge.exporters.base import BaseExporter, ExportOptions, register_exporter
+from docforge.models.ast import (
     Block,
     BlockType,
     DocumentAST,
@@ -21,7 +21,7 @@ from pdf2md.models.ast import (
     TableBlock,
     CalloutBlock,
 )
-from pdf2md.models.cli_options import PageMarkerMode
+from docforge.models.cli_options import PageMarkerMode
 
 
 def escape_typst_text(text: str) -> str:

@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pdf2md.exceptions import DiskWriteException
-from pdf2md.exporters.base import BaseExporter, ExportOptions, register_exporter
-from pdf2md.models.ast import DocumentAST
+from docforge.exceptions import DiskWriteException
+from docforge.exporters.base import BaseExporter, ExportOptions, register_exporter
+from docforge.models.ast import DocumentAST
 
 
 class JsonExporter(BaseExporter):

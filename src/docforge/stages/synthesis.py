@@ -7,17 +7,17 @@ from __future__ import annotations
 
 import os
 from typing import List, Optional
-from pdf2md.exceptions import DiskWriteException
-from pdf2md.exceptions import LlmInferenceException
-from pdf2md.models.ast import (
+from docforge.exceptions import DiskWriteException
+from docforge.exceptions import LlmInferenceException
+from docforge.models.ast import (
     Block,
     BlockType,
     DocumentAST,
     HeadingBlock,
     MathMode,
 )
-from pdf2md.models.cli_options import PageMarkerMode
-from pdf2md.models.toc import TocItem
+from docforge.models.cli_options import PageMarkerMode
+from docforge.models.toc import TocItem
 
 
 def format_page_marker(page_num: int, mode: PageMarkerMode) -> str:

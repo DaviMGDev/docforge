@@ -14,44 +14,44 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 import pymupdf as fitz
 
-from pdf2md.cache.manager import CacheManager
-from pdf2md.exceptions import (
+from docforge.cache.manager import CacheManager
+from docforge.exceptions import (
     CorruptedPdfException,
     InvalidPageRangeException,
     LlmInferenceException,
     LlmTruncationException,
     MissingApiKeyException,
 )
-from pdf2md.exporters import ExportOptions, get_exporter
-from pdf2md.logging import get_logger
-from pdf2md.models.ast import DocumentAST, DocumentChunkAST, HeadingBlock
-from pdf2md.models.cli_options import CliConfig, OutputFormat
-from pdf2md.models.pipeline import (
+from docforge.exporters import ExportOptions, get_exporter
+from docforge.logging import get_logger
+from docforge.models.ast import DocumentAST, DocumentChunkAST, HeadingBlock
+from docforge.models.cli_options import CliConfig, OutputFormat
+from docforge.models.pipeline import (
     AssetRecord,
     ChunkDefinition,
     DocumentClassification,
     PipelineMetrics,
 )
-from pdf2md.stages.classifier import build_bypass_chunk_ast, classify_chunk
-from pdf2md.stages.extract import (
+from docforge.stages.classifier import build_bypass_chunk_ast, classify_chunk
+from docforge.stages.extract import (
     compute_file_sha256,
     extract_chunk,
     extract_native_outline,
     open_pdf_document,
 )
-from pdf2md.stages.llm_worker import (
+from docforge.stages.llm_worker import (
     process_chunk_with_llm,
     validate_api_key_for_model,
 )
-from pdf2md.stages.partition import (
+from docforge.stages.partition import (
     calculate_adaptive_chunk_size,
     parse_page_selection,
     partition_into_chunks,
 )
-from pdf2md.stages.partition_export import generate_partition_index, partition_ast
-from pdf2md.stages.stitcher import stitch_chunks
-from pdf2md.stages.synthesis import emit_markdown, write_output_document
-from pdf2md.stages.toc import generate_interactive_toc
+from docforge.stages.partition_export import generate_partition_index, partition_ast
+from docforge.stages.stitcher import stitch_chunks
+from docforge.stages.synthesis import emit_markdown, write_output_document
+from docforge.stages.toc import generate_interactive_toc
 
 
 class PipelineRunner:

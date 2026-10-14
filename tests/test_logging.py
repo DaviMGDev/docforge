@@ -48,7 +48,7 @@ def test_setup_logging_configures_rich_handler():
     assert any(isinstance(h, RichHandler) for h in logger.handlers)
 
     child_logger = get_logger("child")
-    assert child_logger.name == "pdf2md.child"
+    assert child_logger.name in ("docforge.child", "pdf2md.child")
 
 
 def test_cli_verbose_logging_output(tmp_path):

@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     Block,
     BlockType,
     DocumentAST,

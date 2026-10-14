@@ -9,8 +9,8 @@ import re
 from typing import Any, List, Optional
 import pymupdf as fitz
 
-from pdf2md.exceptions import InvalidPageRangeException
-from pdf2md.models.pipeline import ChunkDefinition
+from docforge.exceptions import InvalidPageRangeException
+from docforge.models.pipeline import ChunkDefinition
 
 
 def parse_page_selection(range_str: Optional[str], total_pages: int) -> List[int]:

@@ -10,9 +10,9 @@ from typing import Optional, Union
 from rich.console import Console
 from rich.logging import RichHandler
 
-from pdf2md.models.cli_options import LogLevel
+from docforge.models.cli_options import LogLevel
 
-LOGGER_NAME = "pdf2md"
+LOGGER_NAME = "docforge"
 logger = logging.getLogger(LOGGER_NAME)
 
 

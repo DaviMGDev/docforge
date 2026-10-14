@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import pymupdf as fitz
 
-from pdf2md.exceptions import CorruptedPdfException, InvalidPageRangeException
-from pdf2md.logging import get_logger
-from pdf2md.models.pipeline import (
+from docforge.exceptions import CorruptedPdfException, InvalidPageRangeException
+from docforge.logging import get_logger
+from docforge.models.pipeline import (
     AssetRecord,
     DocumentClassification,
     ExtractionResult,
@@ -22,7 +22,7 @@ from pdf2md.models.pipeline import (
     PageTextRecord,
     PageTextSpan,
 )
-from pdf2md.models.toc import OutlineNode
+from docforge.models.toc import OutlineNode
 
 logger = get_logger("extract")
 

@@ -84,6 +84,8 @@ class LlmConfig(BaseModel):
     request_timeout_seconds: float = 120.0
     max_retries: int = 3
     context_window: Optional[int] = None
+    instructions: Optional[str] = None
+    prompt_file: Optional[str] = None
 
 
 class CliConfig(BaseModel):
@@ -110,6 +112,8 @@ class CliConfig(BaseModel):
     log_level: Optional[LogLevel] = None
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    instructions: Optional[str] = None
+    prompt_file: Optional[str] = None
 
     @model_validator(mode="after")
     def sync_formats(self) -> CliConfig:

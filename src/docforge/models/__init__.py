@@ -1,6 +1,6 @@
 """Export all domain data models."""
 
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     Block,
     BlockType,
     BoundingBox,
@@ -24,7 +24,7 @@ from pdf2md.models.ast import (
     DocumentChunkAST,
     DocumentAST,
 )
-from pdf2md.models.pipeline import (
+from docforge.models.pipeline import (
     WorkerStatus,
     DocumentClassification,
     PageInfo,
@@ -37,7 +37,7 @@ from pdf2md.models.pipeline import (
     WorkerState,
     PipelineMetrics,
 )
-from pdf2md.models.cache import (
+from docforge.models.cache import (
     CacheStatus,
     InvalidationReason,
     CacheConfig,
@@ -45,7 +45,7 @@ from pdf2md.models.cache import (
     CacheManifest,
     ResumeCheckpoint,
 )
-from pdf2md.models.cli_options import (
+from docforge.models.cli_options import (
     OutputFormat,
     PageMarkerMode,
     LogLevel,
@@ -54,7 +54,7 @@ from pdf2md.models.cli_options import (
     LlmConfig,
     CliConfig,
 )
-from pdf2md.models.toc import (
+from docforge.models.toc import (
     TocSource,
     OutlineNode,
     ASTHeadingNode,

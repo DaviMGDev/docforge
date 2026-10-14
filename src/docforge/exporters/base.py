@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Type
 
-from pdf2md.models.ast import DocumentAST
-from pdf2md.models.cli_options import PageMarkerMode
+from docforge.models.ast import DocumentAST
+from docforge.models.cli_options import PageMarkerMode
 
 
 @dataclass

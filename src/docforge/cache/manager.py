@@ -11,15 +11,15 @@ import json
 import os
 import shutil
 from typing import Dict, List, Optional, Tuple, Union
-from pdf2md.models.ast import DocumentChunkAST
-from pdf2md.models.cache import (
+from docforge.models.ast import DocumentChunkAST
+from docforge.models.cache import (
     CacheManifest,
     CacheStatus,
     ChunkCacheEntry,
     InvalidationReason,
     ResumeCheckpoint,
 )
-from pdf2md.models.cli_options import CliConfig
+from docforge.models.cli_options import CliConfig
 
 
 class CacheManager:
@@ -50,6 +50,13 @@ class CacheManager:
                 pass
         self._init_new_manifest()
 
+    def _get_expected_prompt_version(self) -> str:
+        instructions = getattr(self.config, "instructions", None) or getattr(self.config.llm, "instructions", None)
+        if not instructions or not instructions.strip():
+            return "1.0"
+        instr_hash = hashlib.sha256(instructions.strip().encode("utf-8")).hexdigest()[:12]
+        return f"1.0-{instr_hash}"
+
     def _init_new_manifest(self) -> None:
         """Create fresh manifest."""
         os.makedirs(self.chunks_dir, exist_ok=True)
@@ -66,7 +73,7 @@ class CacheManager:
             chunk_size=self.config.chunk_size,
             dpi=self.config.dpi,
             model_name=self.config.llm.model_name,
-            prompt_version="1.0",
+            prompt_version=self._get_expected_prompt_version(),
             created_at=now_utc,
             last_updated_at=now_utc,
             is_complete=False,
@@ -88,6 +95,9 @@ class CacheManager:
             # Check configuration compatibility
             if manifest.model_name != self.config.llm.model_name:
                 self._invalidate_all(InvalidationReason.MODEL_MISMATCH)
+                return
+            if manifest.prompt_version != self._get_expected_prompt_version():
+                self._invalidate_all(InvalidationReason.PROMPT_VERSION_MISMATCH)
                 return
             if manifest.dpi != self.config.dpi:
                 self._invalidate_all(InvalidationReason.DPI_MISMATCH)

@@ -6,11 +6,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pdf2md.exceptions import DiskWriteException
-from pdf2md.exporters.base import BaseExporter, ExportOptions, register_exporter
-from pdf2md.models.ast import DocumentAST
-from pdf2md.models.cli_options import PageMarkerMode
-from pdf2md.stages.synthesis import emit_markdown
+from docforge.exceptions import DiskWriteException
+from docforge.exporters.base import BaseExporter, ExportOptions, register_exporter
+from docforge.models.ast import DocumentAST
+from docforge.models.cli_options import PageMarkerMode
+from docforge.stages.synthesis import emit_markdown
 
 
 class MarkdownExporter(BaseExporter):

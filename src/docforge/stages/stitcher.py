@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import re
 from typing import Dict, List, Set
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     Block,
     BlockType,
     DocumentAST,

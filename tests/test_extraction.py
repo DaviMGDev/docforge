@@ -2,8 +2,8 @@ import os
 import fitz
 import pytest
 from PIL import Image
-from pdf2md.exceptions import CorruptedPdfException
-from pdf2md.stages.extract import (
+from docforge.exceptions import CorruptedPdfException
+from docforge.stages.extract import (
     compute_file_sha256,
     open_pdf_document,
     render_page_image,

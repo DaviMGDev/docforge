@@ -55,7 +55,7 @@ from docforge.stages.toc import generate_interactive_toc
 
 
 class PipelineRunner:
-    """Executes the pdf2md conversion pipeline."""
+    """Executes the docforge conversion pipeline."""
 
     def __init__(self, config: CliConfig):
         self.config = config

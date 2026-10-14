@@ -2,15 +2,15 @@ import asyncio
 import os
 from unittest.mock import AsyncMock, patch
 import pytest
-from pdf2md.exceptions import (
+from docforge.exceptions import (
     LlmInferenceException,
     LlmTruncationException,
     MissingApiKeyException,
 )
-from pdf2md.models.ast import BlockType, MathMode
-from pdf2md.models.cli_options import LlmConfig
-from pdf2md.models.pipeline import PageImageRecord, PageTextRecord
-from pdf2md.stages.llm_worker import (
+from docforge.models.ast import BlockType, MathMode
+from docforge.models.cli_options import LlmConfig
+from docforge.models.pipeline import PageImageRecord, PageTextRecord
+from docforge.stages.llm_worker import (
     parse_and_validate_response,
     process_chunk_with_llm,
     validate_api_key_for_model,
@@ -27,7 +27,7 @@ def test_missing_api_key_validation(monkeypatch):
 
 def test_ollama_model_normalization_and_validation(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    from pdf2md.stages.llm_worker import normalize_model_name
+    from docforge.stages.llm_worker import normalize_model_name
 
     assert normalize_model_name("gemma4:cloud") == "ollama/gemma4:cloud"
     assert normalize_model_name("ollama/gemma4:cloud") == "ollama/gemma4:cloud"

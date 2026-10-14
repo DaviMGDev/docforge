@@ -14,7 +14,7 @@ Feature: Caching & Interruption Resumption
   Scenario: Resuming conversion after interruption
     Given chunks 0 through 14 (pages 1 to 120) have finished and exist in ".cache/.../chunks/"
     And the conversion was terminated via SIGINT at chunk 15
-    When the user runs "uv run pdf2md document.pdf" again
+    When the user runs "uv run docforge document.pdf" again
     Then chunks 0 through 14 are loaded immediately from disk cache
     And no LLM vision API calls are made for chunks 0 through 14
     And the progress bar starts at chunk 15
@@ -22,14 +22,14 @@ Feature: Caching & Interruption Resumption
 
   Scenario: Invalidation when model or prompt configuration changes
     Given cached chunks exist for model "gpt-4o"
-    When the user runs "uv run pdf2md document.pdf --model claude-3-5-sonnet"
+    When the user runs "uv run docforge document.pdf --model claude-3-5-sonnet"
     Then the cache manifest detects model mismatch
     And the previous cache is invalidated
     And all chunks are re-processed using the new model
 
   Scenario: Forcing cache bypass
     Given valid cached chunks exist on disk
-    When the user runs "uv run pdf2md document.pdf --no-cache"
+    When the user runs "uv run docforge document.pdf --no-cache"
     Then existing cache files are ignored
     And all chunks are re-rendered and re-parsed from scratch
 

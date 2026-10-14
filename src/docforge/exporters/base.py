@@ -1,4 +1,4 @@
-"""Base Exporter interface and registry for pdf2md multi-format export.
+"""Base Exporter interface and registry for docforge multi-format export.
 
 Conforms to Issue #12 (modular multi-format export architecture).
 """

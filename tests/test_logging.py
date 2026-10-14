@@ -6,9 +6,9 @@ from rich.console import Console
 from rich.logging import RichHandler
 from typer.testing import CliRunner
 
-from pdf2md.cli import app
-from pdf2md.logging import get_logger, resolve_log_level, setup_logging
-from pdf2md.models.cli_options import LogLevel
+from docforge.cli import app
+from docforge.logging import get_logger, resolve_log_level, setup_logging
+from docforge.models.cli_options import LogLevel
 
 
 def test_resolve_log_level_from_enum():
@@ -48,7 +48,7 @@ def test_setup_logging_configures_rich_handler():
     assert any(isinstance(h, RichHandler) for h in logger.handlers)
 
     child_logger = get_logger("child")
-    assert child_logger.name in ("docforge.child", "pdf2md.child")
+    assert child_logger.name in ("docforge.child", "docforge.child")
 
 
 def test_cli_verbose_logging_output(tmp_path):

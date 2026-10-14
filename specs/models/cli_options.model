@@ -4,7 +4,7 @@
 
 """
 Command-line options, flag enumerations, validation rules, and runtime
-configuration objects for pdf2md.
+configuration objects for docforge.
 """
 
 enum OutputFormat {

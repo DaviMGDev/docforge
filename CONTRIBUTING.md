@@ -1,8 +1,8 @@
-# Contributing to pdf2md
+# Contributing to docforge
 
-Thank you for your interest in contributing to `pdf2md`!
+Thank you for your interest in contributing to `docforge`!
 
-`pdf2md` is a high-fidelity multimodal PDF-to-Markdown document converter built with Python >= 3.11, [uv](https://docs.astral.sh/uv/), PyMuPDF, and LiteLLM.
+`docforge` is a high-fidelity multimodal document ingestion, transcription, and multi-format export engine built with Python >= 3.11, [uv](https://docs.astral.sh/uv/), PyMuPDF, and LiteLLM.
 
 ---
 
@@ -39,8 +39,9 @@ uv run pytest
 ## Project Structure
 
 ```
-src/pdf2md/
+src/docforge/
 ├── cache/            # SHA-256 chunk checkpointing and cache manager
+├── config.py         # Persistent XDG user configuration manager
 ├── models/           # Typed Pydantic v2 domain schemas (AST, pipeline, options, TOC)
 ├── stages/
 │   ├── partition.py  # Stage 1: Page range parser and adaptive chunking

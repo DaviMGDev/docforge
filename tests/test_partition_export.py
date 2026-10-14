@@ -5,15 +5,15 @@ from pathlib import Path
 from unittest.mock import patch
 import pytest
 
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     DocumentAST,
     DocumentChunkAST,
     HeadingBlock,
     ParagraphBlock,
 )
-from pdf2md.models.cli_options import CliConfig, LlmConfig
-from pdf2md.pipeline import PipelineRunner
-from pdf2md.stages.partition_export import (
+from docforge.models.cli_options import CliConfig, LlmConfig
+from docforge.pipeline import PipelineRunner
+from docforge.stages.partition_export import (
     generate_partition_index,
     partition_ast,
 )
@@ -123,7 +123,7 @@ async def test_pipeline_partitioned_export(tmp_path):
             blocks=[ParagraphBlock(page=p, content=f"Text on page {p}") for p in page_nums],
         )
 
-    with patch("pdf2md.pipeline.process_chunk_with_llm", side_effect=mock_worker):
+    with patch("docforge.pipeline.process_chunk_with_llm", side_effect=mock_worker):
         await runner.run()
 
     assert out_dir.is_dir()

@@ -1,4 +1,4 @@
-"""Runtime logging configuration for pdf2md.
+"""Runtime logging configuration for docforge.
 
 Conforms to Issue #3 (structured runtime logging system for verbose mode).
 """

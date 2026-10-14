@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from pdf2md.models import (
+from docforge.models import (
     BlockType,
     BoundingBox,
     HeadingBlock,

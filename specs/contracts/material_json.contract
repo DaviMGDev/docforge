@@ -9,7 +9,7 @@ intermediate representation (material.json).
 
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://specs.pdf2md.dev/schemas/material.json",
+  "$id": "https://specs.docforge.dev/schemas/material.json",
   "title": "DocumentChunkAST",
   "description": "Structured representation of an extracted and LLM-parsed document chunk",
   "type": "object",

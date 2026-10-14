@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Create a report to help us improve pdf2md
+about: Create a report to help us improve docforge
 title: 'fix: '
 labels: bug
 assignees: ''
@@ -11,7 +11,7 @@ A clear and concise description of what the bug is.
 
 ### Reproduction Steps
 Steps to reproduce the behavior:
-1. Command executed: `uv run pdf2md <path> [options]`
+1. Command executed: `uv run docforge <path> [options]`
 2. Options/flags passed: e.g. `-p "22-23" --verbose`
 3. Observed behavior / output
 

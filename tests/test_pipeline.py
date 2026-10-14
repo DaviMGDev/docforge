@@ -4,10 +4,10 @@ import pymupdf as fitz
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from pdf2md.exceptions import LlmTruncationException, LlmInferenceException
-from pdf2md.models.ast import DocumentChunkAST, ParagraphBlock
-from pdf2md.models.cli_options import CliConfig, ConcurrencyConfig, LlmConfig, OutputFormat
-from pdf2md.pipeline import PipelineRunner
+from docforge.exceptions import LlmTruncationException, LlmInferenceException
+from docforge.models.ast import DocumentChunkAST, ParagraphBlock
+from docforge.models.cli_options import CliConfig, ConcurrencyConfig, LlmConfig, OutputFormat
+from docforge.pipeline import PipelineRunner
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ async def test_adaptive_chunk_subdivision_on_truncation(multi_page_pdf, tmp_path
             created_at="2026-10-12T00:00:00Z",
         )
 
-    with patch("pdf2md.pipeline.process_chunk_with_llm", side_effect=mock_llm_worker):
+    with patch("docforge.pipeline.process_chunk_with_llm", side_effect=mock_llm_worker):
         doc_ast, res_md, _ = await runner.run()
 
     assert doc_ast is not None
@@ -91,7 +91,7 @@ async def test_single_page_truncation_fails_with_actionable_error(multi_page_pdf
     async def mock_single_page_truncation(*args, **kwargs):
         raise LlmTruncationException("Single page hit token limit")
 
-    with patch("pdf2md.pipeline.process_chunk_with_llm", side_effect=mock_single_page_truncation):
+    with patch("docforge.pipeline.process_chunk_with_llm", side_effect=mock_single_page_truncation):
         with pytest.raises(LlmInferenceException) as exc_info:
             await runner.run()
         assert "exceeded model maximum token capacity" in str(exc_info.value)

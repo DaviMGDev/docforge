@@ -4,7 +4,7 @@
 
 """
 Cache structures, manifest schemas, idempotency tokens, and resume checkpoints
-for persistent execution resumption in pdf2md.
+for persistent execution resumption in docforge.
 """
 
 enum CacheStatus {

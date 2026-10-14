@@ -1,8 +1,8 @@
 import os
 import pytest
-from pdf2md.cache.manager import CacheManager
-from pdf2md.models.ast import DocumentChunkAST, ParagraphBlock
-from pdf2md.models.cli_options import CliConfig, LlmConfig
+from docforge.cache.manager import CacheManager
+from docforge.models.ast import DocumentChunkAST, ParagraphBlock
+from docforge.models.cli_options import CliConfig, LlmConfig
 
 
 @pytest.fixture

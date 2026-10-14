@@ -1,6 +1,6 @@
 import pytest
-from pdf2md.exceptions import InvalidPageRangeException
-from pdf2md.stages.partition import parse_page_selection, partition_into_chunks
+from docforge.exceptions import InvalidPageRangeException
+from docforge.stages.partition import parse_page_selection, partition_into_chunks
 
 
 def test_parse_page_selection_default_all():

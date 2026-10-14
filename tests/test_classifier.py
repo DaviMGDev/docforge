@@ -1,8 +1,8 @@
 import os
 import fitz
 import pytest
-from pdf2md.models.pipeline import ChunkDefinition, DocumentClassification
-from pdf2md.stages.classifier import classify_chunk, classify_page, build_bypass_chunk_ast
+from docforge.models.pipeline import ChunkDefinition, DocumentClassification
+from docforge.stages.classifier import classify_chunk, classify_page, build_bypass_chunk_ast
 
 
 @pytest.fixture
@@ -87,8 +87,8 @@ def test_multicolumn_forces_complex(multicolumn_pdf):
 
 @pytest.mark.asyncio
 async def test_pipeline_routes_to_llm_even_with_auto_bypass(prose_pdf, tmp_path):
-    from pdf2md.pipeline import PipelineRunner
-    from pdf2md.models.cli_options import CliConfig, LlmConfig
+    from docforge.pipeline import PipelineRunner
+    from docforge.models.cli_options import CliConfig, LlmConfig
 
     out_md = str(tmp_path / "prose_out.md")
     cfg = CliConfig(

@@ -1,12 +1,12 @@
 import pytest
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     BlockType,
     DocumentChunkAST,
     HeadingBlock,
     ParagraphBlock,
     TableBlock,
 )
-from pdf2md.stages.stitcher import stitch_chunks
+from docforge.stages.stitcher import stitch_chunks
 
 
 def test_heal_split_paragraph_across_chunk_boundary():

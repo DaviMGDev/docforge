@@ -1,4 +1,4 @@
-"""pdf2md exporters package: modular multi-format export architecture."""
+"""docforge exporters package: modular multi-format export architecture."""
 
 from docforge.exporters.base import (
     BaseExporter,

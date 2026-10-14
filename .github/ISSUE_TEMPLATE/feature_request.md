@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest an idea or architectural improvement for pdf2md
+about: Suggest an idea or architectural improvement for docforge
 title: 'feat: '
 labels: enhancement
 assignees: ''
@@ -15,7 +15,7 @@ A clear description of the proposed feature, interface design, and expected beha
 ### CLI & API Design
 Detail proposed command-line flags, configuration options, or data schemas:
 ```bash
-uv run pdf2md document.pdf --your-flag <value>
+uv run docforge document.pdf --your-flag <value>
 ```
 
 ### Additional Context or Alternatives

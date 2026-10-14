@@ -4,7 +4,7 @@
 
 """
 Table of Contents hierarchy, outline bookmarks, heading slugs, and
-cross-referencing models for pdf2md.
+cross-referencing models for docforge.
 """
 
 enum TocSource {

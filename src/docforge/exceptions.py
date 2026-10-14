@@ -1,37 +1,41 @@
-"""Custom exceptions for pdf2md."""
+"""Custom exceptions for docforge."""
 
 
-class Pdf2MdException(Exception):
-    """Base exception for all pdf2md errors."""
+class DocForgeException(Exception):
+    """Base exception for all docforge errors."""
     pass
 
 
-class InvalidPageRangeException(Pdf2MdException):
+# Backwards compatibility alias
+Pdf2MdException = DocForgeException
+
+
+class InvalidPageRangeException(DocForgeException):
     """Raised when page range syntax is malformed or out of document bounds."""
     pass
 
 
-class CorruptedPdfException(Pdf2MdException):
+class CorruptedPdfException(DocForgeException):
     """Raised when PDF file cannot be opened or repaired."""
     pass
 
 
-class MissingApiKeyException(Pdf2MdException):
+class MissingApiKeyException(DocForgeException):
     """Raised when required API key for configured model is missing."""
     pass
 
 
-class DiskWriteException(Pdf2MdException):
+class DiskWriteException(DocForgeException):
     """Raised when target file or asset cannot be written."""
     pass
 
 
-class ChunkOrderException(Pdf2MdException):
+class ChunkOrderException(DocForgeException):
     """Raised when chunk order is invalid during stitching."""
     pass
 
 
-class LlmInferenceException(Pdf2MdException):
+class LlmInferenceException(DocForgeException):
     """Raised when LLM calls fail repeatedly across retries."""
     pass
 

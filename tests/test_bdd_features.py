@@ -10,13 +10,13 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from PIL import Image
 
-from pdf2md.exceptions import (
+from docforge.exceptions import (
     CorruptedPdfException,
     InvalidPageRangeException,
     LlmInferenceException,
     MissingApiKeyException,
 )
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     BlockType,
     CodeBlock,
     DocumentAST,
@@ -28,30 +28,30 @@ from pdf2md.models.ast import (
     ParagraphBlock,
     TableBlock,
 )
-from pdf2md.models.cli_options import CliConfig, LlmConfig, OutputFormat, PageMarkerMode
-from pdf2md.models.pipeline import ChunkDefinition, DocumentClassification, PageImageRecord, PageTextRecord
-from pdf2md.models.toc import OutlineNode
-from pdf2md.stages.classifier import build_bypass_chunk_ast, classify_chunk
-from pdf2md.stages.extract import (
+from docforge.models.cli_options import CliConfig, LlmConfig, OutputFormat, PageMarkerMode
+from docforge.models.pipeline import ChunkDefinition, DocumentClassification, PageImageRecord, PageTextRecord
+from docforge.models.toc import OutlineNode
+from docforge.stages.classifier import build_bypass_chunk_ast, classify_chunk
+from docforge.stages.extract import (
     compute_file_sha256,
     extract_and_dedupe_assets,
     extract_raw_page_text,
     open_pdf_document,
     render_page_image,
 )
-from pdf2md.stages.llm_worker import (
+from docforge.stages.llm_worker import (
     parse_and_validate_response,
     process_chunk_with_llm,
     validate_api_key_for_model,
 )
-from pdf2md.stages.partition import (
+from docforge.stages.partition import (
     calculate_adaptive_chunk_size,
     parse_page_selection,
     partition_into_chunks,
 )
-from pdf2md.stages.stitcher import stitch_chunks
-from pdf2md.stages.synthesis import emit_markdown, format_page_marker
-from pdf2md.stages.toc import generate_interactive_toc, transcribe_printed_toc
+from docforge.stages.stitcher import stitch_chunks
+from docforge.stages.synthesis import emit_markdown, format_page_marker
+from docforge.stages.toc import generate_interactive_toc, transcribe_printed_toc
 
 
 # -----------------------------------------------------------------------------

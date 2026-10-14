@@ -12,7 +12,7 @@ INTERFACE CommandLineInterface {
     """
     Standard CLI invocation command syntax.
     """
-    COMMAND pdf2md(
+    COMMAND docforge(
         input_pdf: Positional[String],
         output: Option[String] = None,              # Short: -o, default: <stem>.md or <stem>.json
         format: Option[String] = "md",              # Short: -f, choices: md|json|both, default: md
@@ -51,8 +51,8 @@ INTERFACE CommandLineInterface {
         - OPENAI_API_KEY: Used when model starts with "gpt-", "o1-", or OpenAI prefix.
         - ANTHROPIC_API_KEY: Used when model starts with "claude-".
         - GEMINI_API_KEY: Used when model starts with "gemini-".
-        - PDF2MD_CACHE_DIR: Overrides default cache directory (".cache").
-        - PDF2MD_DPI: Overrides default rendering DPI (150).
+        - DOCFORGE_CACHE_DIR: Overrides default cache directory (".cache").
+        - DOCFORGE_DPI: Overrides default rendering DPI (150).
 
     """
     Terminal Output Contract (Rich)

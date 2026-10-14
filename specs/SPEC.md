@@ -1,4 +1,4 @@
-# System Specification: Multimodal PDF-to-Markdown Converter (`pdf2md`)
+# System Specification: Multimodal PDF-to-Markdown Converter (`docforge`)
 
 **Version:** 1.0.0  
 **Status:** Approved / Canonical Specification  
@@ -10,7 +10,7 @@
 ## 1. System Overview & Philosophy
 
 ### 1.1 Purpose
-`pdf2md` is a command-line utility and Python library that transforms arbitrary, complex PDF documents into semantic, lint-clean CommonMark/GitHub Flavored Markdown (GFM). The system bypasses traditional, fragile OCR engines (e.g., Tesseract, PaddleOCR, OCRopus) in favor of a hybrid architecture:
+`docforge` is a command-line utility and Python library that transforms arbitrary, complex PDF documents into semantic, lint-clean CommonMark/GitHub Flavored Markdown (GFM). The system bypasses traditional, fragile OCR engines (e.g., Tesseract, PaddleOCR, OCRopus) in favor of a hybrid architecture:
 1. **Deterministic Native Extraction**: High-fidelity character stream extraction, font metadata, vector outline analysis, and raw asset extraction directly from PDF byte streams via native PyMuPDF bindings.
 2. **Multimodal LLM Structural Parsing**: Vision-language models (e.g., GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro) receive page bitmap renderings alongside native text ground truth and an extracted asset manifest to classify document blocks, transcribe formulas into standard LaTeX, build clean Markdown/HTML tables, and place assets accurately.
 3. **Cross-Chunk AST Synthesis**: Chunked ASTs are reconciled across page boundaries to heal split sentences, continuing tables, and recurring running headers/footers.
@@ -388,7 +388,7 @@ The cache is invalidated and rebuilt if:
 
 ### 6.3 Resumption Semantics
 Upon launching a conversion:
-1. `pdf2md` checks for `.cache/<pdf_hash>/manifest.json`.
+1. `docforge` checks for `.cache/<pdf_hash>/manifest.json`.
 2. Any chunk whose `chunk_{i}.json` exists and validates against the schema is loaded directly from disk.
 3. The progress bar marks those chunks as already completed and only executes remaining chunks.
 4. If interrupted via `SIGINT` (Ctrl+C), all completed chunks remain intact on disk.
@@ -400,23 +400,23 @@ Upon launching a conversion:
 ### 7.1 Command Line Interface
 ```bash
 # Basic conversion (emits Markdown by default)
-uv run pdf2md document.pdf -o output.md
+uv run docforge document.pdf -o output.md
 
 # Flexible output format: emit both Markdown and unified JSON AST
-uv run pdf2md document.pdf --format both -o output.md
+uv run docforge document.pdf --format both -o output.md
 
 # Emit single unified JSON AST only (skipping MD rendering)
-uv run pdf2md document.pdf --format json -o output.json
+uv run docforge document.pdf --format json -o output.json
 
 # Targeted page extraction with badge markers and custom chunk size
-uv run pdf2md document.pdf \
+uv run docforge document.pdf \
     --pages "1-40" \
     --page-markers badge \
     --chunk-size 4 \
     -o excerpt.md
 
 # High-fidelity conversion with opt-in auto-bypass
-uv run pdf2md document.pdf \
+uv run docforge document.pdf \
     -o ./dist/paper.md \
     --format both \
     --toc \

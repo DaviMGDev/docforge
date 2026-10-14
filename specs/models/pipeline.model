@@ -4,7 +4,7 @@
 
 """
 Execution state models, runtime job configurations, page extraction records,
-worker tracking structures, and pipeline metrics for pdf2md.
+worker tracking structures, and pipeline metrics for docforge.
 """
 
 enum WorkerStatus {

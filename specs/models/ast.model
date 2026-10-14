@@ -4,7 +4,7 @@
 
 """
 Formal representation of Document Abstract Syntax Tree (AST), block hierarchies,
-and intermediate chunk representations for pdf2md.
+and intermediate chunk representations for docforge.
 """
 
 enum BlockType {

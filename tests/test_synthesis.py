@@ -1,5 +1,5 @@
 import pytest
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     BlockType,
     DocumentAST,
     HeadingBlock,
@@ -8,10 +8,10 @@ from pdf2md.models.ast import (
     CalloutBlock,
     CalloutType,
 )
-from pdf2md.models.cli_options import PageMarkerMode
-from pdf2md.models.toc import OutlineNode
-from pdf2md.stages.synthesis import emit_markdown, format_page_marker
-from pdf2md.stages.toc import generate_interactive_toc, transcribe_printed_toc
+from docforge.models.cli_options import PageMarkerMode
+from docforge.models.toc import OutlineNode
+from docforge.stages.synthesis import emit_markdown, format_page_marker
+from docforge.stages.toc import generate_interactive_toc, transcribe_printed_toc
 
 
 def test_page_marker_formatting():

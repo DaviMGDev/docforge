@@ -3,7 +3,7 @@
 
 @cli @error_handling
 Feature: CLI & Error Handling
-  As an operator executing pdf2md
+  As an operator executing docforge
   I want informative terminal feedback, graceful failure recovery, and standard exit codes
   So that I have full operational visibility and resilience in automated pipelines
 
@@ -36,23 +36,23 @@ Feature: CLI & Error Handling
 
   Scenario: Corrupted PDF document error handling
     Given an invalid, truncated PDF file "damaged.pdf"
-    When the user runs "uv run pdf2md damaged.pdf"
+    When the user runs "uv run docforge damaged.pdf"
     Then the process attempts PyMuPDF repair
     And if unrecoverable, exits with code 2 and message "Error: Corrupted PDF file"
 
   Scenario: Output format selection (Markdown, JSON, or Both)
-    When the user runs "uv run pdf2md document.pdf --format both -o output.md"
+    When the user runs "uv run docforge document.pdf --format both -o output.md"
     Then "output.md" is generated containing formatted CommonMark
     And "output.json" is generated containing the stitched DocumentAST
     And both files are saved successfully
 
   Scenario: Output JSON only
-    When the user runs "uv run pdf2md document.pdf --format json -o output.json"
+    When the user runs "uv run docforge document.pdf --format json -o output.json"
     Then "output.json" is generated containing the stitched DocumentAST
     And no ".md" file is emitted
 
   Scenario: Missing API key validation
     Given no "OPENAI_API_KEY" set in the environment
-    When the user runs "uv run pdf2md document.pdf --model gpt-4o"
+    When the user runs "uv run docforge document.pdf --model gpt-4o"
     Then the process halts before rendering pages
     And exits with code 5 and message "Error: OPENAI_API_KEY is required for model 'gpt-4o'"

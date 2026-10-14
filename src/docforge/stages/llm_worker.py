@@ -472,14 +472,20 @@ async def process_chunk_with_llm(
                     if "extra_body" not in kwargs:
                         kwargs["extra_body"] = {}
                     kwargs["extra_body"]["num_ctx"] = config.context_window
-                api_base = config.api_base or os.environ.get("PDF2MD_API_BASE") or (
-                    os.environ.get("OLLAMA_API_BASE") if "ollama" in normalized_model else None
+                api_base = (
+                    config.api_base
+                    or os.environ.get("DOCFORGE_API_BASE")
+                    or os.environ.get("PDF2MD_API_BASE")
+                    or (os.environ.get("OLLAMA_API_BASE") if "ollama" in normalized_model else None)
                 )
                 if api_base:
                     kwargs["api_base"] = api_base
 
-                api_key = config.api_key or os.environ.get("PDF2MD_API_KEY") or (
-                    os.environ.get("OLLAMA_API_KEY") if "ollama" in normalized_model else None
+                api_key = (
+                    config.api_key
+                    or os.environ.get("DOCFORGE_API_KEY")
+                    or os.environ.get("PDF2MD_API_KEY")
+                    or (os.environ.get("OLLAMA_API_KEY") if "ollama" in normalized_model else None)
                 )
                 if api_key:
                     kwargs["api_key"] = api_key

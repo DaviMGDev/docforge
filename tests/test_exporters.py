@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import pytest
 
-from pdf2md.exporters import (
+from docforge.exporters import (
     BaseExporter,
     ExportOptions,
     ExporterRegistry,
@@ -17,7 +17,7 @@ from pdf2md.exporters import (
     list_supported_formats,
     register_exporter,
 )
-from pdf2md.models.ast import (
+from docforge.models.ast import (
     CalloutBlock,
     CalloutType,
     CodeBlock,
@@ -31,8 +31,8 @@ from pdf2md.models.ast import (
     ParagraphBlock,
     TableBlock,
 )
-from pdf2md.models.cli_options import PageMarkerMode
-from pdf2md.models.toc import TocItem, TocSource
+from docforge.models.cli_options import PageMarkerMode
+from docforge.models.toc import TocItem, TocSource
 
 
 @pytest.fixture

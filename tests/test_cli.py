@@ -2,7 +2,7 @@ import os
 import pymupdf as fitz
 import pytest
 from typer.testing import CliRunner
-from pdf2md.cli import app
+from docforge.cli import app
 
 runner = CliRunner()
 
@@ -109,10 +109,10 @@ async def test_stage1_progress_tracks_selected_pages(tmp_path):
     doc.close()
 
     from unittest.mock import patch
-    from pdf2md.models.ast import DocumentChunkAST, ParagraphBlock
-    from pdf2md.models.cli_options import CliConfig, LlmConfig, RangeSpec
-    from pdf2md.models.pipeline import ExtractionResult
-    from pdf2md.pipeline import PipelineRunner
+    from docforge.models.ast import DocumentChunkAST, ParagraphBlock
+    from docforge.models.cli_options import CliConfig, LlmConfig, RangeSpec
+    from docforge.models.pipeline import ExtractionResult
+    from docforge.pipeline import PipelineRunner
 
     cfg = CliConfig(
         input_pdf_path=pdf_path,
@@ -136,8 +136,8 @@ async def test_stage1_progress_tracks_selected_pages(tmp_path):
         blocks=[ParagraphBlock(page=2, content="Mock text")],
     )
 
-    with patch("pdf2md.pipeline.extract_chunk") as mock_extract, patch(
-        "pdf2md.pipeline.process_chunk_with_llm", return_value=mock_ast
+    with patch("docforge.pipeline.extract_chunk") as mock_extract, patch(
+        "docforge.pipeline.process_chunk_with_llm", return_value=mock_ast
     ):
         mock_extract.return_value = ExtractionResult(
             chunk_index=0,

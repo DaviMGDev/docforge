@@ -307,6 +307,21 @@ def convert(
         )
     )
 
+    resolved_split_by = resolve_value_precedence(
+        cli_value=split_by,
+        env_keys=["DOCFORGE_SPLIT_BY", "PDF2MD_SPLIT_BY"],
+        settings_value=user_settings.defaults.split_by,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+    resolved_split_pattern = resolve_value_precedence(
+        cli_value=split_pattern,
+        env_keys=["DOCFORGE_SPLIT_PATTERN", "PDF2MD_SPLIT_PATTERN"],
+        settings_value=user_settings.defaults.split_pattern,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+
     parsed_log_level = None
     if log_level:
         try:
@@ -322,8 +337,8 @@ def convert(
         output_formats=parsed_formats,
         standalone=standalone,
         embed_assets=embed_assets,
-        split_by=split_by,
-        split_pattern=split_pattern,
+        split_by=resolved_split_by,
+        split_pattern=resolved_split_pattern,
         assets_dir_path=assets_dir,
         cache_dir_path=resolved_cache_dir,
         pages_spec=range_spec,

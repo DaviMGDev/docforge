@@ -101,6 +101,8 @@ def test_load_user_settings_valid_json(tmp_path: Path):
             "cache_dir": "~/.cache/custom",
             "instructions": "Transcribe accurately.",
             "prompt_file": "SYSTEM.md",
+            "split_by": "chapter",
+            "split_pattern": "{index:02d}_{slug}.md",
         },
     }
     valid_file.write_text(json.dumps(payload))
@@ -116,6 +118,8 @@ def test_load_user_settings_valid_json(tmp_path: Path):
     assert settings.defaults.chunk_size == 2
     assert settings.defaults.instructions == "Transcribe accurately."
     assert settings.defaults.prompt_file == "SYSTEM.md"
+    assert settings.defaults.split_by == "chapter"
+    assert settings.defaults.split_pattern == "{index:02d}_{slug}.md"
 
 
 def test_default_template_generation():

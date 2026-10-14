@@ -37,6 +37,8 @@ class DefaultSettings(BaseModel):
     dpi: Optional[int] = None
     instructions: Optional[str] = None
     prompt_file: Optional[str] = None
+    split_by: Optional[str] = None
+    split_pattern: Optional[str] = None
 
 
 class UserSettings(BaseModel):
@@ -86,6 +88,8 @@ def get_default_settings_template() -> Dict[str, Any]:
             "cache_dir": "~/.cache/docforge",
             "instructions": None,
             "prompt_file": "SYSTEM.md",
+            "split_by": None,
+            "split_pattern": None,
         },
     }
 

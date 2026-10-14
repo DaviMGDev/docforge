@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 from typing import Optional
@@ -39,6 +40,7 @@ from docforge.models.cli_options import (
     RangeSpec,
     parse_output_formats,
 )
+from docforge.exceptions import DiskWriteException
 from docforge.pipeline import PipelineRunner
 from docforge.stages.extract import open_pdf_document
 from docforge.stages.partition import parse_page_selection
@@ -50,6 +52,71 @@ app = typer.Typer(
 )
 console = Console()
 err_console = Console(stderr=True)
+
+
+def resolve_output_path(
+    input_pdf: str,
+    output: Optional[str] = None,
+    format_ext: str = "md",
+    pages: Optional[str] = None,
+    output_template: Optional[str] = None,
+) -> str:
+    """Determine the destination output filename/path based on template, pages, and collision rules."""
+    in_p = Path(input_pdf)
+    if output:
+        out_p = Path(output)
+        try:
+            if out_p.resolve() == in_p.resolve():
+                raise DiskWriteException(f"Destination output path cannot overwrite input source PDF: {input_pdf}")
+        except FileNotFoundError:
+            pass
+        return output
+
+    stem = in_p.stem
+    ext = format_ext.lower().lstrip(".")
+    if ext == "typst":
+        ext = "typ"
+
+    # Normalize pages string for safe filenames (e.g. "5-10" -> "5-10")
+    clean_pages = ""
+    if pages and pages.strip():
+        raw = pages.strip().strip("[]").strip()
+        clean_pages = re.sub(r"[:,]+", "-", raw)
+        clean_pages = re.sub(r"[^\w\-]", "", clean_pages)
+
+    page_indicator = f"p{clean_pages}" if clean_pages else ""
+    page_suffix = f"_p{clean_pages}" if clean_pages else ""
+
+    if output_template and output_template.strip():
+        tmpl = output_template.strip()
+        rendered = tmpl.replace("{stem}", stem)
+        rendered = rendered.replace("{page_suffix}", page_suffix)
+        rendered = rendered.replace("{pages}", page_indicator)
+        rendered = rendered.replace("{format}", ext)
+        rendered = rendered.replace("{ext}", ext)
+        rendered = re.sub(r"\.{2,}", ".", rendered)
+        out_p = Path(rendered)
+        try:
+            if out_p.resolve() == in_p.resolve():
+                raise DiskWriteException(f"Destination output path cannot overwrite input source PDF: {input_pdf}")
+        except FileNotFoundError:
+            pass
+        return rendered
+
+    # Collision avoidance for compilable formats (.typ, .tex, .html)
+    compilable_formats = {"typ", "tex", "html"}
+    collision_suffix = ""
+    if not page_suffix and ext in compilable_formats:
+        collision_suffix = "_forge"
+
+    dest = f"{stem}{page_suffix}{collision_suffix}.{ext}"
+    out_p = Path(dest)
+    try:
+        if out_p.resolve() == in_p.resolve():
+            raise DiskWriteException(f"Destination output path cannot overwrite input source PDF: {input_pdf}")
+    except FileNotFoundError:
+        pass
+    return dest
 
 
 @app.command()
@@ -83,6 +150,11 @@ def convert(
         None,
         "--split-pattern",
         help="Custom output filename template for partitioned files",
+    ),
+    output_template: Optional[str] = typer.Option(
+        None,
+        "--output-template",
+        help="Custom output filename template with placeholders {stem}, {pages}, {format}",
     ),
     pages: Optional[str] = typer.Option(None, "-p", "--pages", help="Page range specification e.g. '1-10' or '[0:10]'"),
     page_markers: str = typer.Option("anchor", "-m", "--page-markers", help="Page marker style: anchor, badge, comment, none"),
@@ -182,18 +254,26 @@ def convert(
         out_format = OutputFormat.MD
 
     # Determine default output path
-    stem = os.path.splitext(os.path.basename(input_pdf))[0]
-    if output is None:
-        if len(parsed_formats) == 1 and parsed_formats[0] == "json":
-            dest_output = f"{stem}.json"
-        elif len(parsed_formats) == 1 and parsed_formats[0] == "html":
-            dest_output = f"{stem}.html"
-        elif len(parsed_formats) == 1 and parsed_formats[0] in ("typ", "typst"):
-            dest_output = f"{stem}.typ"
-        else:
-            dest_output = f"{stem}.md"
-    else:
-        dest_output = output
+    resolved_output_template = resolve_value_precedence(
+        cli_value=output_template,
+        env_keys=["DOCFORGE_OUTPUT_TEMPLATE", "PDF2MD_OUTPUT_TEMPLATE"],
+        settings_value=user_settings.defaults.output_template,
+        default_value=None,
+        dotenv_dict=local_dotenv,
+    )
+
+    dest_fmt = parsed_formats[0].lower() if len(parsed_formats) == 1 else "md"
+    try:
+        dest_output = resolve_output_path(
+            input_pdf=input_pdf,
+            output=output,
+            format_ext=dest_fmt,
+            pages=pages,
+            output_template=resolved_output_template,
+        )
+    except DiskWriteException as e:
+        err_console.print(f"[red]Error: {e}[/red]")
+        sys.exit(2)
 
     range_spec = RangeSpec(raw_input=pages, normalized_pages=[]) if pages else None
 

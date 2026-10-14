@@ -57,33 +57,94 @@ KNOWN_TYPST_MATH_WORDS = {
     "partial", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
     "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau",
     "upsilon", "phi", "chi", "psi", "omega", "Gamma", "Delta", "Theta", "Lambda",
-    "Xi", "Pi", "Sigma", "Phi", "Psi", "Omega"
+    "Xi", "Pi", "Sigma", "Phi", "Psi", "Omega", "degree", "arrow", "hat", "macron",
+    "tilde", "overline", "underline", "approx", "equiv", "prop", "dots", "h.bar", "ell",
+    "double", "triple", "cont", "bar", "acute", "grave", "caron", "breve"
 }
 
 
 def convert_latex_to_typst_math(tex: str) -> str:
-    """Basic normalization of common LaTeX math expressions for Typst."""
+    """Comprehensive normalization of LaTeX math expressions to valid Typst math mode."""
     s = tex.strip()
-    # Typst handles raw math cleanly inside $ $, but replacing common LaTeX syntax produces idiomatic Typst
-    # \frac{a}{b} -> (a)/(b) or frac(a, b)
-    s = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1) / (\2)", s)
-    # \cdot -> dot
-    s = s.replace(r"\cdot", "dot")
-    # \times -> times
-    s = s.replace(r"\times", "times")
-    # \pm -> plus.minus
-    s = s.replace(r"\pm", "plus.minus")
-    # \infty -> infinity
-    s = s.replace(r"\infty", "infinity")
-    # \le, \leq -> <=
-    s = re.sub(r"\\le(q)?\b", "<=", s)
-    # \ge, \geq -> >=
-    s = re.sub(r"\\ge(q)?\b", ">=", s)
-    # \ne, \neq -> !=
-    s = re.sub(r"\\ne(q)?\b", "!=", s)
-    # \to -> ->
-    s = s.replace(r"\to", "->")
-    # \alpha, \beta, etc. strip backslash
+    if not s:
+        return ""
+
+    # Preserve and protect string literals like \text{...}
+    texts: List[str] = []
+
+    def save_text(m: re.Match) -> str:
+        texts.append(m.group(1))
+        return f"__TEXT_PH_{len(texts)-1}__"
+
+    s = re.sub(r"\\(?:text|mathrm|mathbf|mathit|textbf)\{([^{}]+)\}", save_text, s)
+
+    # Fractions
+    while re.search(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", s):
+        s = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1) / (\2)", s)
+
+    # Scaled delimiters: \left( \right) etc.
+    s = re.sub(r"\\left\s*([(\[{|])", r"\1", s)
+    s = re.sub(r"\\right\s*([)\]}|])", r"\1", s)
+    s = re.sub(r"\\left\s*\\\{", r"\{", s)
+    s = re.sub(r"\\right\s*\\\}", r"\}", s)
+    s = re.sub(r"\\left\.", "", s)
+    s = re.sub(r"\\right\.", "", s)
+
+    # Spacing commands
+    s = re.sub(r"\\(?:quad|qquad)", "  ", s)
+    s = re.sub(r"\\[,;: ]", " ", s)
+
+    # Operators & calculus
+    s = re.sub(r"\\int(?![a-zA-Z])", "integral", s)
+    s = re.sub(r"\\iint(?![a-zA-Z])", "integral.double", s)
+    s = re.sub(r"\\iiint(?![a-zA-Z])", "integral.triple", s)
+    s = re.sub(r"\\oint(?![a-zA-Z])", "integral.cont", s)
+    s = re.sub(r"\\sum(?![a-zA-Z])", "sum", s)
+    s = re.sub(r"\\prod(?![a-zA-Z])", "product", s)
+    s = re.sub(r"\\partial(?![a-zA-Z])", "diff", s)
+    s = re.sub(r"\\nabla(?![a-zA-Z])", "nabla", s)
+    s = re.sub(r"\\hbar(?![a-zA-Z])", "h.bar", s)
+    s = re.sub(r"\\ell(?![a-zA-Z])", "ell", s)
+    s = re.sub(r"\\circ(?![a-zA-Z])", "degree", s)
+
+    # Math symbols & relations
+    s = re.sub(r"\\cdot(?![a-zA-Z])", "dot", s)
+    s = re.sub(r"\\times(?![a-zA-Z])", "times", s)
+    s = re.sub(r"\\div(?![a-zA-Z])", "div", s)
+    s = re.sub(r"\\pm(?![a-zA-Z])", "plus.minus", s)
+    s = re.sub(r"\\mp(?![a-zA-Z])", "minus.plus", s)
+    s = re.sub(r"\\infty(?![a-zA-Z])", "infinity", s)
+    s = re.sub(r"\\approx(?![a-zA-Z])", "approx", s)
+    s = re.sub(r"\\sim(?![a-zA-Z])", "tilde", s)
+    s = re.sub(r"\\equiv(?![a-zA-Z])", "equiv", s)
+    s = re.sub(r"\\propto(?![a-zA-Z])", "prop", s)
+    s = re.sub(r"\\le(q)?(?![a-zA-Z])", "<=", s)
+    s = re.sub(r"\\ge(q)?(?![a-zA-Z])", ">=", s)
+    s = re.sub(r"\\ne(q)?(?![a-zA-Z])", "!=", s)
+    s = re.sub(r"\\to(?![a-zA-Z])|\\rightarrow(?![a-zA-Z])", "->", s)
+    s = re.sub(r"\\leftarrow(?![a-zA-Z])", "<-", s)
+    s = re.sub(r"\\Rightarrow(?![a-zA-Z])", "=>", s)
+    s = re.sub(r"\\Leftarrow(?![a-zA-Z])", "<=", s)
+    s = re.sub(r"\\leftrightarrow(?![a-zA-Z])", "<->", s)
+    s = re.sub(r"\\Leftrightarrow(?![a-zA-Z])", "<=>", s)
+    s = re.sub(r"\\(?:dots|cdots|ldots)(?![a-zA-Z])", "dots", s)
+
+    # Accents & vectors
+    s = re.sub(r"\\vec\{([^{}]+)\}", r"arrow(\1)", s)
+    s = re.sub(r"\\vec\s+([a-zA-Z])", r"arrow(\1)", s)
+    s = re.sub(r"\\hat\{([^{}]+)\}", r"hat(\1)", s)
+    s = re.sub(r"\\hat\s+([a-zA-Z])", r"hat(\1)", s)
+    s = re.sub(r"\\dot\{([^{}]+)\}", r"dot(\1)", s)
+    s = re.sub(r"\\dot\s+([a-zA-Z])", r"dot(\1)", s)
+    s = re.sub(r"\\ddot\{([^{}]+)\}", r"dot.double(\1)", s)
+    s = re.sub(r"\\ddot\s+([a-zA-Z])", r"dot.double(\1)", s)
+    s = re.sub(r"\\bar\{([^{}]+)\}", r"macron(\1)", s)
+    s = re.sub(r"\\bar\s+([a-zA-Z])", r"macron(\1)", s)
+    s = re.sub(r"\\tilde\{([^{}]+)\}", r"tilde(\1)", s)
+    s = re.sub(r"\\tilde\s+([a-zA-Z])", r"tilde(\1)", s)
+    s = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", s)
+
+    # Greek letters
     greek = [
         "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
         "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma",
@@ -91,24 +152,110 @@ def convert_latex_to_typst_math(tex: str) -> str:
         "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Phi", "Psi", "Omega"
     ]
     for g in greek:
-        s = re.sub(rf"\\{g}\b", g, s)
-    # \text{...} -> "..."
-    s = re.sub(r"\\text\{([^{}]+)\}", r'"\1"', s)
-    # \mathbf{...} -> bold(...)
-    s = re.sub(r"\\mathbf\{([^{}]+)\}", r"bold(\1)", s)
-    # \mathit{...} -> italic(...)
-    s = re.sub(r"\\mathit\{([^{}]+)\}", r"italic(\1)", s)
-    # \sqrt{...} -> sqrt(...)
-    s = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", s)
+        s = re.sub(rf"\\{g}(?![a-zA-Z])", g, s)
 
-    # In Typst, juxtaposed multi-letter variables like 'mc' are parsed as unknown symbols.
-    # Separate adjacent latin variables not matching known functions/symbols:
+    # Subscripts & superscripts with curly braces: _{...} -> _(...) and ^{...} -> ^(...)
+    while re.search(r"(_|\^)\{([^{}]+)\}", s):
+        s = re.sub(r"(_|\^)\{([^{}]+)\}", r"\1(\2)", s)
+
+    # General grouping braces {...} -> (...)
+    while re.search(r"\{([^{}]+)\}", s):
+        s = re.sub(r"\{([^{}]+)\}", r"(\1)", s)
+
+    # Floating superscripts: ^ without preceding base (at start, or after space/punctuation)
+    s = re.sub(r"(^|[\s(\[,=+\-*/])\^", r'\1""^', s)
+
+    # Separate adjacent latin letters not in known words, excluding placeholders
     s = re.sub(
         r"\b[a-zA-Z]{2,}\b",
-        lambda m: m.group(0) if m.group(0) in KNOWN_TYPST_MATH_WORDS else " ".join(list(m.group(0))),
+        lambda m: m.group(0) if (m.group(0) in KNOWN_TYPST_MATH_WORDS or m.group(0).startswith("__TEXT_PH_")) else " ".join(list(m.group(0))),
         s,
     )
+
+    # Restore texts as string literals
+    for i, t in enumerate(texts):
+        s = s.replace(f"__TEXT_PH_{i}__", f'"{t}"')
+
+    # Double backslash in math -> line break
+    s = s.replace(r"\\", r"\ ")
     return s
+
+
+def format_typst_content(text: str, in_table: bool = False) -> str:
+    """Format and escape text content, translating inline/display math and markdown formatting."""
+    if not text:
+        return ""
+
+    # Split text into math and non-math segments:
+    # Display math: $$...$$ or \[...\]
+    # Inline math: $...$ or \(...\)
+    pattern = re.compile(r"(\$\$.*?\$\$|(?<!\\)\$[^$\n]+?\$|\\\[.*?\\\]|\\\(.*?\\\))", re.DOTALL)
+    parts = pattern.split(text)
+
+    output: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("$$") and part.endswith("$$"):
+            inner = part[2:-2]
+            converted = convert_latex_to_typst_math(inner)
+            output.append(f"$ {converted} $")
+        elif part.startswith("\\[") and part.endswith("\\]"):
+            inner = part[2:-2]
+            converted = convert_latex_to_typst_math(inner)
+            output.append(f"$ {converted} $")
+        elif part.startswith("\\(") and part.endswith("\\)"):
+            inner = part[2:-2]
+            converted = convert_latex_to_typst_math(inner)
+            output.append(f"${converted}$")
+        elif part.startswith("$") and part.endswith("$") and len(part) > 1:
+            inner = part[1:-1]
+            converted = convert_latex_to_typst_math(inner)
+            output.append(f"${converted}$")
+        else:
+            # Plain text part
+            segment = part
+            # 1. Heading conversion at start of lines: ### Heading -> === Heading
+            lines = segment.split("\n")
+            proc_lines = []
+            for line in lines:
+                m = re.match(r"^(\s*)(#{1,6})\s+(.*)$", line)
+                if m:
+                    indent = m.group(1)
+                    level = len(m.group(2))
+                    title = m.group(3)
+                    equals = "=" * min(level, 6)
+                    proc_lines.append(f"{indent}{equals} {title}")
+                else:
+                    proc_lines.append(line)
+            segment = "\n".join(proc_lines)
+
+            # 2. Escape # not part of Typst keywords
+            segment = re.sub(
+                r"(?<!\\)#(?!table|align|figure|image|rect|line|set|show|let|import|include|outline)",
+                r"\#",
+                segment,
+            )
+
+            # 3. Markdown bold: **text** -> *text*
+            bolds: List[str] = []
+
+            def save_b(m: re.Match) -> str:
+                bolds.append(m.group(1))
+                return f"__BOLD_PH_{len(bolds)-1}__"
+
+            segment = re.sub(r"\*\*([^\*\n]+?)\*\*", save_b, segment)
+
+            # 4. Asterisks escaping in text to prevent unclosed delimiter or star collision
+            segment = re.sub(r"(?<!\\)\*", r"\*", segment)
+
+            # Restore bold
+            for i, b in enumerate(bolds):
+                segment = segment.replace(f"__BOLD_PH_{i}__", f"*{b}*")
+
+            output.append(segment)
+
+    return "".join(output)
 
 
 class TypstExporter(BaseExporter):
@@ -122,18 +269,18 @@ class TypstExporter(BaseExporter):
         if block.type == BlockType.HEADING:
             equals = "=" * min(block.level, 6)
             label = f" <{block.slug}>" if block.slug else ""
-            return f"{equals} {block.content}{label}\n"
+            return f"{equals} {format_typst_content(block.content)}{label}\n"
 
         elif block.type == BlockType.PARAGRAPH:
-            return f"{block.content}\n"
+            return f"{format_typst_content(block.content)}\n"
 
         elif block.type == BlockType.LIST:
             lines: List[str] = []
             for i, item in enumerate(block.items):
                 pfx = "+ " if block.ordered else "- "
-                lines.append(f"{pfx}{item.content}")
+                lines.append(f"{pfx}{format_typst_content(item.content)}")
                 for sub in item.sub_items:
-                    lines.append(f"  - {sub.content}")
+                    lines.append(f"  - {format_typst_content(sub.content)}")
             return "\n".join(lines) + "\n"
 
         elif block.type == BlockType.CODE:
@@ -159,11 +306,16 @@ class TypstExporter(BaseExporter):
             cells: List[str] = []
             if block.header:
                 for h in block.header:
-                    cells.append(f"  [* {escape_typst_text(h.strip())} *],")
+                    formatted_h = format_typst_content(h.strip(), in_table=True)
+                    if formatted_h.startswith("*") and formatted_h.endswith("*"):
+                        cells.append(f"  [{formatted_h}],")
+                    else:
+                        cells.append(f"  [* {formatted_h} *],")
             if block.rows:
                 for row in block.rows:
                     for cell in row:
-                        cells.append(f"  [{escape_typst_text(cell.strip())}],")
+                        formatted_cell = format_typst_content(cell.strip(), in_table=True)
+                        cells.append(f"  [{formatted_cell}],")
 
             cells_joined = "\n".join(cells)
             if block.caption:
@@ -214,8 +366,8 @@ class TypstExporter(BaseExporter):
             }
             stroke_color = color_map.get(c_type.upper(), "blue")
             title = block.title or c_type.upper()
-            title_line = f"*{escape_typst_text(title)}* \\ \n" if title else ""
-            body_text = escape_typst_text(block.content)
+            title_line = f"*{format_typst_content(title)}* \\ \n" if title else ""
+            body_text = format_typst_content(block.content)
 
             return (
                 f"#rect(\n"

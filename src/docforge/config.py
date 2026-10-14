@@ -39,6 +39,7 @@ class DefaultSettings(BaseModel):
     prompt_file: Optional[str] = None
     split_by: Optional[str] = None
     split_pattern: Optional[str] = None
+    output_template: Optional[str] = None
 
 
 class UserSettings(BaseModel):

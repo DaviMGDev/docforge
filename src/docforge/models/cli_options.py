@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -26,9 +26,21 @@ class SplitStrategy(str, Enum):
     CHAPTER_PAGE = "chapter/page"
 
 
-def parse_output_formats(format_str: str) -> List[str]:
-    """Parse format option string into list of normalized format identifiers."""
-    cleaned = format_str.strip().lower()
+def parse_output_formats(format_input: Union[str, List[str], Any]) -> List[str]:
+    """Parse format option string or sequence into list of normalized format identifiers."""
+    if isinstance(format_input, (list, tuple, set)):
+        normalized: List[str] = []
+        for item in format_input:
+            sub = parse_output_formats(item)
+            for s in sub:
+                if s not in normalized:
+                    normalized.append(s)
+        return normalized or ["md"]
+
+    if not isinstance(format_input, str):
+        format_input = str(format_input)
+
+    cleaned = format_input.strip().lower()
     if cleaned == "both":
         return ["md", "json"]
     if cleaned == "all":

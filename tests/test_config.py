@@ -202,6 +202,7 @@ def test_cli_integration_with_persistent_settings(dummy_pdf: Path, tmp_path: Pat
         "defaults": {
             "chunk_size": 2,
             "page_markers": "badge",
+            "format": ["md", "typ"],
         },
     }))
 
@@ -224,3 +225,4 @@ def test_cli_integration_with_persistent_settings(dummy_pdf: Path, tmp_path: Pat
                     assert config.llm.context_window == 16384
                     assert config.llm.request_timeout_seconds == 99.0
                     assert config.page_marker_mode.value == "badge"
+                    assert config.output_formats == ["md", "typ"]

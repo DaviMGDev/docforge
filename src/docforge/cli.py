@@ -56,11 +56,12 @@ err_console = Console(stderr=True)
 def convert(
     input_pdf: str = typer.Argument(..., help="Path to input PDF file"),
     output: Optional[str] = typer.Option(None, "-o", "--output", help="Destination output file path"),
-    format: str = typer.Option(
-        "md",
+    format: Optional[str] = typer.Option(
+        None,
         "-f",
         "--format",
         help="Output format(s): md, json, html, typ, both, all (or comma-separated e.g. md,json)",
+        show_default="md",
     ),
     standalone: bool = typer.Option(
         True,
@@ -160,14 +161,28 @@ def convert(
             err_console.print(f"[red]Error: Invalid page range: {e}[/red]")
             sys.exit(4)
 
-    # Determine default output path
-    stem = os.path.splitext(os.path.basename(input_pdf))[0]
-    parsed_formats = parse_output_formats(format)
-    try:
-        out_format = OutputFormat(format.lower())
-    except ValueError:
+    # Load 5-tier configuration sources
+    user_settings = load_user_settings()
+    local_dotenv = dotenv_values(".env") if os.path.exists(".env") else {}
+
+    resolved_format = resolve_value_precedence(
+        cli_value=format,
+        env_keys=["DOCFORGE_FORMAT", "PDF2MD_FORMAT"],
+        settings_value=user_settings.defaults.format,
+        default_value="md",
+        dotenv_dict=local_dotenv,
+    )
+    parsed_formats = parse_output_formats(resolved_format)
+    if len(parsed_formats) == 1:
+        try:
+            out_format = OutputFormat(parsed_formats[0].lower())
+        except ValueError:
+            out_format = OutputFormat.MD
+    else:
         out_format = OutputFormat.MD
 
+    # Determine default output path
+    stem = os.path.splitext(os.path.basename(input_pdf))[0]
     if output is None:
         if len(parsed_formats) == 1 and parsed_formats[0] == "json":
             dest_output = f"{stem}.json"
@@ -181,10 +196,6 @@ def convert(
         dest_output = output
 
     range_spec = RangeSpec(raw_input=pages, normalized_pages=[]) if pages else None
-
-    # Load 5-tier configuration sources
-    user_settings = load_user_settings()
-    local_dotenv = dotenv_values(".env") if os.path.exists(".env") else {}
 
     selected_model = resolve_value_precedence(
         cli_value=model,
@@ -426,10 +437,22 @@ def convert(
         progress.stop()
 
         console.print(f"\n[green]✓ Conversion completed successfully![/green]")
-        if out_md:
-            console.print(f"  Markdown: [bold]{out_md}[/bold]")
-        if out_json:
-            console.print(f"  AST JSON: [bold]{out_json}[/bold]")
+        if runner.generated_files:
+            for gen_path in runner.generated_files:
+                p = Path(gen_path)
+                label_map = {
+                    ".md": "Markdown",
+                    ".json": "AST JSON",
+                    ".html": "HTML",
+                    ".typ": "Typst",
+                }
+                label = label_map.get(p.suffix.lower(), p.suffix.upper().lstrip(".") or "Document")
+                console.print(f"  {label}: [bold]{gen_path}[/bold]")
+        else:
+            if out_md:
+                console.print(f"  Markdown: [bold]{out_md}[/bold]")
+            if out_json:
+                console.print(f"  AST JSON: [bold]{out_json}[/bold]")
 
         loop.close()
         sys.exit(0)

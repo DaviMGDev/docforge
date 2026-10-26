@@ -15,12 +15,14 @@ from docforge.exporters.typst import (
     TypstExporter,
     convert_latex_to_typst_math,
     format_typst_content,
+    sanitize_currency_expressions,
 )
 from docforge.models.ast import (
     CalloutBlock,
     CalloutType,
     DocumentAST,
     HeadingBlock,
+    ImageBlock,
     ListBlock,
     ListItem,
     MathBlock,
@@ -162,3 +164,165 @@ def test_typst_exporter_render_full_stem_document(tmp_path: Path):
         res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
         assert res.returncode == 0, f"typst compile failed:\n{res.stderr}"
         assert pdf_file.exists() and pdf_file.stat().st_size > 0
+
+
+def test_issue_19_currency_symbols_escaping(tmp_path: Path):
+    """Verify Issue #19 (1): currency symbols do not toggle math mode or cause split letters."""
+    text = (
+        r"Gold costs $1400/oz while diamonds cost $500,000. "
+        r"Market capitalization is $\$10^9$. "
+        r"Another item costs $\$100$ or \$500,000."
+    )
+    formatted = format_typst_content(text)
+    assert r"\$1400" in formatted
+    assert r"\$500,000" in formatted
+    assert r"\$10^9" in formatted
+    assert r"\$100" in formatted
+
+    # Verify Typst compilation
+    ast = make_ast([ParagraphBlock(page=1, content=text)])
+    exporter = TypstExporter()
+    rendered = exporter.render(ast)
+    typ_file = tmp_path / "currency.typ"
+    pdf_file = tmp_path / "currency.pdf"
+    typ_file.write_text(rendered, encoding="utf-8")
+
+    if shutil.which("typst"):
+        res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
+        assert res.returncode == 0, f"typst compile failed:\n{res.stderr}"
+
+
+def test_issue_19_missing_image_asset_fallback_and_placeholder(tmp_path: Path):
+    """Verify Issue #19 (2): missing image assets fall back or emit placeholder without aborting compile."""
+    # Subtest A: Fallback to existing asset_p31_00.png on same page
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(parents=True)
+    fallback_png = assets_dir / "asset_p31_00.png"
+    # Create valid 1x1 png
+    fallback_png.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+        b"\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    ast_fallback = make_ast([
+        ImageBlock(
+            page=31,
+            asset_path=str(assets_dir / "asset_p31_01.png"),  # Missing, should fallback to _00.png
+            caption="Fallback diagram",
+        )
+    ])
+    exporter = TypstExporter()
+    rendered_fallback = exporter.render(ast_fallback)
+    assert "asset_p31_00.png" in rendered_fallback
+
+    # Subtest B: Completely missing image emits placeholder #rect
+    ast_placeholder = make_ast([
+        ImageBlock(
+            page=99,
+            asset_path=str(assets_dir / "asset_p99_05.png"),  # No fallback exists
+            caption="Non-existent diagram",
+        ),
+        ImageBlock(
+            page=99,
+            asset_path=str(assets_dir / "asset_p99_06.png"),  # Standalone without caption
+        ),
+    ])
+    rendered_placeholder = exporter.render(ast_placeholder)
+    assert "#rect" in rendered_placeholder or "rect(" in rendered_placeholder
+    assert "Missing image: asset_p99_05.png" in rendered_placeholder
+    assert "Missing image: asset_p99_06.png" in rendered_placeholder
+
+    typ_file = tmp_path / "images.typ"
+    pdf_file = tmp_path / "images.pdf"
+    typ_file.write_text(rendered_placeholder, encoding="utf-8")
+
+    if shutil.which("typst"):
+        res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
+        assert res.returncode == 0, f"typst compile failed on placeholder:\n{res.stderr}"
+
+
+def test_issue_19_latex_math_functions_backslash_stripping(tmp_path: Path):
+    """Verify Issue #19 (3): LaTeX math functions strip backslashes (tan, sin, cos, ln, log, sqrt)."""
+    tex = r"\tan\theta + \sin(x) + \cos\phi + \ln(y) + \log_{10}(z) + \arctan(x) + \sqrt[3]{8} = 2"
+    converted = convert_latex_to_typst_math(tex)
+    assert "tan" in converted and r"\tan" not in converted
+    assert "sin" in converted and r"\sin" not in converted
+    assert "cos" in converted and r"\cos" not in converted
+    assert "ln" in converted and r"\ln" not in converted
+    assert "log" in converted and r"\log" not in converted
+    assert "arctan" in converted and r"\arctan" not in converted
+    assert "root(3, 8)" in converted
+
+    ast = make_ast([
+        MathBlock(
+            page=1,
+            math_mode=MathMode.BLOCK,
+            content=tex,
+        )
+    ])
+    exporter = TypstExporter()
+    rendered = exporter.render(ast)
+
+    typ_file = tmp_path / "math_fn.typ"
+    pdf_file = tmp_path / "math_fn.pdf"
+    typ_file.write_text(rendered, encoding="utf-8")
+
+    if shutil.which("typst"):
+        res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
+        assert res.returncode == 0, f"typst compile failed:\n{res.stderr}"
+
+
+def test_issue_19_quote_and_caption_sanitization(tmp_path: Path):
+    """Verify Issue #19 (4): \\text{...} in captions/tables does not emit unclosed string delimiters (\\\")."""
+    tex = r"F_{\text{net}} = m a_{\text{cm}}"
+    converted = convert_latex_to_typst_math(tex)
+    assert r'\"' not in converted
+
+    ast = make_ast([
+        TableBlock(
+            page=1,
+            caption=r"Densities in \text{SI units} with \"quoted\" values",
+            header=["Material", r"Density ($\text{kg/m}^3$)"],
+            rows=[["Steel", r"$7.85 \times 10^3$"]],
+        )
+    ])
+    exporter = TypstExporter()
+    rendered = exporter.render(ast)
+    assert r'\"' not in rendered
+
+    typ_file = tmp_path / "quotes.typ"
+    pdf_file = tmp_path / "quotes.pdf"
+    typ_file.write_text(rendered, encoding="utf-8")
+
+    if shutil.which("typst"):
+        res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
+        assert res.returncode == 0, f"typst compile failed on quote sanitization:\n{res.stderr}"
+
+
+def test_issue_19_adjacent_variable_separation(tmp_path: Path):
+    """Verify Issue #19 (5): multi-letter variables with subscripts (cA_x, AB cos phi) insert whitespace."""
+    tex = r"cA_x + cA_y + AB \cos\phi = v_{net}"
+    converted = convert_latex_to_typst_math(tex)
+    assert "c A_x" in converted
+    assert "c A_y" in converted
+    assert "A B" in converted
+    assert "cos phi" in converted
+    assert "v_(n e t)" in converted
+
+    ast = make_ast([
+        MathBlock(
+            page=1,
+            math_mode=MathMode.BLOCK,
+            content=tex,
+        )
+    ])
+    exporter = TypstExporter()
+    rendered = exporter.render(ast)
+
+    typ_file = tmp_path / "variables.typ"
+    pdf_file = tmp_path / "variables.pdf"
+    typ_file.write_text(rendered, encoding="utf-8")
+
+    if shutil.which("typst"):
+        res = subprocess.run(["typst", "compile", str(typ_file), str(pdf_file)], capture_output=True, text=True)
+        assert res.returncode == 0, f"typst compile failed on adjacent variables:\n{res.stderr}"

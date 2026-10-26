@@ -49,8 +49,8 @@ def format_typst_page_marker(page_num: int, mode: PageMarkerMode) -> str:
 
 KNOWN_TYPST_MATH_WORDS = {
     "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
-    "sinh", "cosh", "tanh", "ln", "log", "exp", "det", "gcd", "lcm", "min", "max",
-    "lim", "mod", "deg", "dim", "ker", "hom", "arg", "Pr", "inf", "sup", "sqrt",
+    "sinh", "cosh", "tanh", "coth", "ln", "log", "exp", "det", "gcd", "lcm", "min", "max",
+    "lim", "mod", "deg", "dim", "ker", "hom", "arg", "Pr", "inf", "sup", "sqrt", "root",
     "frac", "binom", "abs", "norm", "floor", "ceil", "round", "bold", "italic",
     "mono", "sans", "serif", "cal", "frak", "bb", "dot", "times", "plus", "minus",
     "infinity", "integral", "diff", "sum", "product", "forall", "exists", "nabla",
@@ -61,6 +61,49 @@ KNOWN_TYPST_MATH_WORDS = {
     "tilde", "overline", "underline", "approx", "equiv", "prop", "dots", "h.bar", "ell",
     "double", "triple", "cont", "bar", "acute", "grave", "caron", "breve"
 }
+
+LATEX_MATH_FUNCTIONS = {
+    "sin", "cos", "tan", "cot", "sec", "csc",
+    "arcsin", "arccos", "arctan",
+    "sinh", "cosh", "tanh", "coth",
+    "ln", "log", "exp",
+    "det", "gcd", "lcm", "min", "max",
+    "lim", "mod", "deg", "dim", "ker", "hom", "arg", "Pr", "inf", "sup",
+}
+
+_MATH_FN_PATTERN = re.compile(
+    rf"\\({'|'.join(sorted(LATEX_MATH_FUNCTIONS, key=len, reverse=True))})(?![a-zA-Z])([\s(\^_]*)"
+)
+
+
+def sanitize_currency_expressions(text: str) -> str:
+    """Normalize monetary expressions (e.g. $1400, $500,000, $10^9, $\\$100$) so they don't toggle Typst math mode."""
+    if not text:
+        return ""
+
+    # 1. Math-wrapped currency with backslash: $\\$1400$, $\\$10^9$, $\\$500,000$
+    s = re.sub(
+        r"\$\s*\\\$([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*\^\s*\{?[0-9]+\}?)?)\s*\$",
+        r"\\$\1",
+        text,
+    )
+
+    # 2. Purely numeric/exponent spans between $: $100$, $1400$, $500,000$, $10^9$
+    s = re.sub(
+        r"(?<!\\)\$([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*\^\s*\{?[0-9]+\}?)?)\$",
+        r"\\$\1",
+        s,
+    )
+
+    # 3. Currency amounts in prose: $1400, $500,000, $10^9, $0.50
+    # Preceded by start of string, whitespace, or open punctuation
+    s = re.sub(
+        r"(^|[\s([{\"'`])(?<!\\)\$([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*\^\s*\{?[0-9]+\}?)?)\b",
+        r"\1\\$\2",
+        s,
+    )
+
+    return s
 
 
 def convert_latex_to_typst_math(tex: str) -> str:
@@ -73,10 +116,11 @@ def convert_latex_to_typst_math(tex: str) -> str:
     texts: List[str] = []
 
     def save_text(m: re.Match) -> str:
-        texts.append(m.group(1))
+        t = m.group(1).rstrip("\\").replace('"', "'")
+        texts.append(t)
         return f"__TEXT_PH_{len(texts)-1}__"
 
-    s = re.sub(r"\\(?:text|mathrm|mathbf|mathit|textbf)\{([^{}]+)\}", save_text, s)
+    s = re.sub(r"\\+(?:text|mathrm|mathbf|mathit|textbf)\{([^{}]+)\}", save_text, s)
 
     # Fractions
     while re.search(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", s):
@@ -142,7 +186,21 @@ def convert_latex_to_typst_math(tex: str) -> str:
     s = re.sub(r"\\bar\s+([a-zA-Z])", r"macron(\1)", s)
     s = re.sub(r"\\tilde\{([^{}]+)\}", r"tilde(\1)", s)
     s = re.sub(r"\\tilde\s+([a-zA-Z])", r"tilde(\1)", s)
+    s = re.sub(r"\\sqrt\[([^{}\]]+)\]\{([^{}]+)\}", r"root(\1, \2)", s)
     s = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", s)
+    s = re.sub(r"\\sqrt(?![a-zA-Z])", "sqrt", s)
+
+    # Standard LaTeX math functions (sin, cos, tan, log, ln, etc.)
+    s = re.sub(r"\\operatorname\{([^{}]+)\}", r"\1 ", s)
+
+    def _replace_math_fn(m: re.Match) -> str:
+        name = m.group(1)
+        tail = m.group(2)
+        if not tail:
+            return f"{name} "
+        return f"{name}{tail}"
+
+    s = _MATH_FN_PATTERN.sub(_replace_math_fn, s)
 
     # Greek letters
     greek = [
@@ -165,12 +223,23 @@ def convert_latex_to_typst_math(tex: str) -> str:
     # Floating superscripts: ^ without preceding base (at start, or after space/punctuation)
     s = re.sub(r"(^|[\s(\[,=+\-*/])\^", r'\1""^', s)
 
-    # Separate adjacent latin letters not in known words, excluding placeholders
+    # Separate adjacent latin letters not in known words, protecting placeholders
+    def _split_letters(m: re.Match) -> str:
+        if m.group(1):
+            return m.group(1)
+        w = m.group(2)
+        if w in KNOWN_TYPST_MATH_WORDS:
+            return w
+        return " ".join(list(w))
+
     s = re.sub(
-        r"\b[a-zA-Z]{2,}\b",
-        lambda m: m.group(0) if (m.group(0) in KNOWN_TYPST_MATH_WORDS or m.group(0).startswith("__TEXT_PH_")) else " ".join(list(m.group(0))),
+        r"(__TEXT_PH_\d+__)|(?<![a-zA-Z])([a-zA-Z]{2,})(?![a-zA-Z])",
+        _split_letters,
         s,
     )
+
+    # Strip any backslashes immediately preceding placeholder
+    s = re.sub(r"\\+(__TEXT_PH_\d+__)", r"\1", s)
 
     # Restore texts as string literals
     for i, t in enumerate(texts):
@@ -178,6 +247,9 @@ def convert_latex_to_typst_math(tex: str) -> str:
 
     # Double backslash in math -> line break
     s = s.replace(r"\\", r"\ ")
+
+    # Normalize any escaped quotes in math string literals: \"word" -> "word"
+    s = re.sub(r'(?<!\\)\\"([^"]*)"', r'"\1"', s)
     return s
 
 
@@ -185,6 +257,8 @@ def format_typst_content(text: str, in_table: bool = False) -> str:
     """Format and escape text content, translating inline/display math and markdown formatting."""
     if not text:
         return ""
+
+    text = sanitize_currency_expressions(text)
 
     # Split text into math and non-math segments:
     # Display math: $$...$$ or \[...\]
@@ -249,6 +323,12 @@ def format_typst_content(text: str, in_table: bool = False) -> str:
             # 4. Asterisks escaping in text to prevent unclosed delimiter or star collision
             segment = re.sub(r"(?<!\\)\*", r"\*", segment)
 
+            # 5. Escape any remaining unescaped dollar signs in plain text
+            segment = re.sub(r"(?<!\\)\$", r"\$", segment)
+
+            # 6. Normalize escaped quotes in plain text / captions
+            segment = segment.replace(r'\"', '"')
+
             # Restore bold
             for i, b in enumerate(bolds):
                 segment = segment.replace(f"__BOLD_PH_{i}__", f"*{b}*")
@@ -287,8 +367,8 @@ class TypstExporter(BaseExporter):
             lang = block.language or ""
             fenced = f"```{lang}\n{block.content.rstrip()}\n```"
             if block.caption:
-                cap_esc = escape_typst_string(block.caption)
-                return f"#figure(\n  [{fenced}],\n  caption: [{cap_esc}]\n)\n"
+                cap_formatted = format_typst_content(block.caption)
+                return f"#figure(\n  [{fenced}],\n  caption: [{cap_formatted}]\n)\n"
             return f"{fenced}\n"
 
         elif block.type == BlockType.MATH:
@@ -319,14 +399,14 @@ class TypstExporter(BaseExporter):
 
             cells_joined = "\n".join(cells)
             if block.caption:
-                cap_esc = escape_typst_string(block.caption)
+                cap_formatted = format_typst_content(block.caption)
                 return (
                     f"#figure(\n"
                     f"  table(\n"
                     f"    columns: {col_count},\n"
                     f"{cells_joined}\n"
                     f"  ),\n"
-                    f"  caption: [{cap_esc}]\n"
+                    f"  caption: [{cap_formatted}]\n"
                     f")\n"
                 )
             return f"#table(\n  columns: {col_count},\n{cells_joined}\n)\n"
@@ -348,11 +428,57 @@ class TypstExporter(BaseExporter):
                     except Exception:
                         pass
 
+            # Verify actual path existence on disk
+            path_obj = Path(actual_path)
+            if not path_obj.exists():
+                # Attempt fallback to page asset (e.g. asset_p{block.page}_00.png) in same directory
+                parent_dir = path_obj.parent
+                fallback_found = False
+                if parent_dir.exists():
+                    candidates = [
+                        parent_dir / f"asset_p{block.page}_00.png",
+                        parent_dir / f"asset_p{block.page}_00.jpg",
+                    ]
+                    for p in parent_dir.glob(f"asset_p{block.page}_*.*"):
+                        if p.suffix.lower() in typst_supported_exts and p not in candidates:
+                            candidates.append(p)
+                    for cand in candidates:
+                        if cand.exists():
+                            actual_path = str(cand)
+                            path_obj = cand
+                            fallback_found = True
+                            break
+
+                if not fallback_found and not path_obj.exists():
+                    clean_name = escape_typst_text(path_obj.name)
+                    caption_text = block.caption or block.alt_text or ""
+                    if caption_text:
+                        cap_formatted = format_typst_content(caption_text)
+                        return (
+                            f"#figure(\n"
+                            f"  rect(width: 100%, height: 60pt, stroke: 0.5pt + gray, fill: rgb(\"f8fafc\"), radius: 4pt)[\n"
+                            f"    #align(center + horizon)[#text(fill: gray.darken(30%), size: 9pt)[🖼️ Missing image: {clean_name}]]\n"
+                            f"  ],\n"
+                            f"  caption: [{cap_formatted}]\n"
+                            f")\n"
+                        )
+                    return (
+                        f"#rect(\n"
+                        f"  width: 100%,\n"
+                        f"  height: 60pt,\n"
+                        f"  stroke: 0.5pt + gray,\n"
+                        f'  fill: rgb("f8fafc"),\n'
+                        f"  radius: 4pt,\n"
+                        f")[\n"
+                        f"  #align(center + horizon)[#text(fill: gray.darken(30%), size: 9pt)[🖼️ Missing image: {clean_name}]]\n"
+                        f"]\n"
+                    )
+
             path_esc = escape_typst_string(actual_path)
             if block.caption or block.alt_text:
                 caption_text = block.caption or block.alt_text or ""
-                cap_esc = escape_typst_string(caption_text)
-                return f'#figure(\n  image("{path_esc}"),\n  caption: [{cap_esc}]\n)\n'
+                cap_formatted = format_typst_content(caption_text)
+                return f'#figure(\n  image("{path_esc}"),\n  caption: [{cap_formatted}]\n)\n'
             return f'#image("{path_esc}")\n'
 
         elif block.type == BlockType.CALLOUT:
